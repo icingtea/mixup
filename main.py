@@ -1,4 +1,5 @@
-def main():
+def main() -> None:
+    """Placeholder entry point from `uv init`."""
     print("Hello from mixup!")
 
 

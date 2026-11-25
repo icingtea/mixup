@@ -1,4 +1,14 @@
+"""Builds the Docker image and starts one container per entry in src/config.json.
+
+Run from the project root. Every container gets the same image; CONTAINER_NAME and
+CONFIG tell infer.py which part of the model it holds. The model folder is mounted
+read-only into each container instead of being copied into the image.
+"""
+
 import docker
+from docker.models.containers import Container
+from docker.models.images import Image
+from docker.models.networks import Network
 from pathlib import Path
 import models
 from enum import Enum
@@ -11,26 +21,36 @@ IMAGE_NAME = "agent-test"
 IMAGE_TAG = "centralized"
 
 N_CONTAINERS = len(config.experts)
-INTERNAL_PORT = 8000
-EXTERNAL_PORT_BASE = 9000
+INTERNAL_PORT = 8000  # the port infer.py listens on inside every container
+EXTERNAL_PORT_BASE = 9000  # central gets 9000 on the host, expert containers 9001, 9002, ...
 
-NETWORK_ADDRESSES = {config.central: EXTERNAL_PORT_BASE}
-CONTAINERS = {}
+NETWORK_ADDRESSES: dict[str, int] = {config.central: EXTERNAL_PORT_BASE}
+"""Container name -> its port on the host machine."""
+
+CONTAINERS: dict[str, Container] = {}
+"""Containers started by this run."""
 
 for offset, (container_name, experts) in enumerate(config.experts.items()):
     port = EXTERNAL_PORT_BASE + offset + 1
     NETWORK_ADDRESSES[container_name] = port
 
+
 class ContainerType(Enum):
+    """What a container runs: everything except the experts, or some experts."""
+
     CENTRAL = "central"
     EXPERT = "expert"
 
+
 client = docker.from_env()
 
+image: Image
 image, logs = client.images.build(
     path=".",
     dockerfile=str(Path("src", "load_network", "Dockerfile")),
-    tag=f"{IMAGE_NAME}:{IMAGE_TAG}"
+    tag=f"{IMAGE_NAME}:{IMAGE_TAG}",
+    rm=True,
+    forcerm=True
 )
 
 for log in logs:
@@ -39,6 +59,7 @@ for log in logs:
 
 print(f"BUILT IMAGE {IMAGE_NAME}:{IMAGE_TAG}")
 
+network: Network
 try:
     network = client.networks.get(NETWORK_NAME)
     print("FOUND NETWORK:", NETWORK_NAME)
@@ -48,7 +69,18 @@ except:
         driver="bridge"
     )
 
-def start_container(port, container_name, type: ContainerType, layers=None):
+
+def start_container(
+    port: int,
+    container_name: str,
+    type: ContainerType,
+    layers: list[int] | None = None,
+) -> bool:
+    """Start `container_name` on the cluster network, reachable from the host on `port`.
+
+    If a container with that name already exists, it is started again (or left running)
+    instead of being recreated, so changes to the image only apply to new containers.
+    """
     try:
         container = client.containers.get(container_name)
         if container.status == "running":
@@ -60,8 +92,8 @@ def start_container(port, container_name, type: ContainerType, layers=None):
         return True
     except:
         pass
-    
-    
+
+
     container = client.containers.run(
         image=image,
         name=container_name,
@@ -74,8 +106,11 @@ def start_container(port, container_name, type: ContainerType, layers=None):
             "Name": "unless-stopped"
         },
         environment={
-            "type":type.value,
-            "layers":",".join(map(str, layers or [])),
+            "CONTAINER_NAME": container_name,
+            "CONFIG": config.model_dump_json(),
+        },
+        volumes={
+            str(Path("models").resolve()): {"bind": "/usr/local/app/models", "mode": "ro"}
         }
     )
 
