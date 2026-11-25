@@ -68,7 +68,11 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           pythonSet = pythonSets.${system}.overrideScope editableOverlay;
-          virtualenv = pythonSet.mkVirtualEnv "mixup-dev-env" workspace.deps.all;
+          # mixup-node (torch + CUDA) runs inside Docker containers, not in the host
+          # dev shell, so exclude it here. This keeps `nix develop` off the CUDA
+          # wheels, which don't build on NixOS (nvidia-cufile -> rdma-core).
+          hostDeps = builtins.removeAttrs workspace.deps.all [ "mixup-node" ];
+          virtualenv = pythonSet.mkVirtualEnv "mixup-dev-env" hostDeps;
         in
         {
           default = pkgs.mkShell {
@@ -88,9 +92,5 @@
           };
         }
       );
-
-      packages = forAllSystems (system: {
-        default = pythonSets.${system}.mkVirtualEnv "mixup-env" workspace.deps.default;
-      });
     };
 }

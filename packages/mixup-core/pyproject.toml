@@ -5,8 +5,11 @@ build-backend = "uv_build"
 [project]
 name = "mixup-core"
 version = "0.1.0"
-description = "Shared types, config, and constants for distributed MoE inference."
+description = "Shared types, config, constants, and routing for distributed MoE inference."
 requires-python = ">=3.13"
 dependencies = [
     "pydantic>=2.14.2",
 ]
+
+[project.scripts]
+mixup-smoketest = "mixup_core.smoketest:main"

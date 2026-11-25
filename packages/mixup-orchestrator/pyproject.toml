@@ -9,8 +9,13 @@ description = "Host-side Docker orchestration for distributed MoE inference."
 requires-python = ">=3.13"
 dependencies = [
     "docker>=7.2.0",
+    "huggingface_hub>=0.30.0",
     "mixup-core",
 ]
+
+[project.scripts]
+mixup-fetch-model = "mixup_orchestrator.fetch:main"
+mixup-orchestrator = "mixup_orchestrator.distribute:main"
 
 [tool.uv.sources]
 mixup-core = { workspace = true }

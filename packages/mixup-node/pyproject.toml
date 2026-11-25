@@ -10,12 +10,16 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.165.0",
     "mixup-core",
+    "pydantic>=2.14.2",
     "requests>=2.34.0",
     "safetensors>=0.8.0",
     "torch>=2.14.1",
     "transformers>=5.24.1",
     "uvicorn>=0.30.0",
 ]
+
+[project.scripts]
+mixup-node = "mixup_node.infer:start"
 
 [tool.uv.sources]
 mixup-core = { workspace = true }

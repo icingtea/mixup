@@ -1,0 +1,6 @@
+.git
+.venv
+models
+model_chunks
+**/__pycache__
+.temp
