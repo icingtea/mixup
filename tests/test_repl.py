@@ -1,8 +1,8 @@
 """Tests for the REPL's discovery logic (torch-free)."""
 
-from mixup_repl.repl import node_urls, pick_leader
-
+from mixup_core.hosts import node_urls
 from mixup_core.types import StartupConfig
+from mixup_repl.repl import pick_leader
 
 
 def _config() -> StartupConfig:

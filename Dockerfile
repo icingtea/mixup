@@ -18,6 +18,7 @@ COPY packages/mixup-core/pyproject.toml packages/mixup-core/pyproject.toml
 COPY packages/mixup-node/pyproject.toml packages/mixup-node/pyproject.toml
 COPY packages/mixup-orchestrator/pyproject.toml packages/mixup-orchestrator/pyproject.toml
 COPY packages/mixup-repl/pyproject.toml packages/mixup-repl/pyproject.toml
+COPY packages/mixup-gateway/pyproject.toml packages/mixup-gateway/pyproject.toml
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package mixup-node \

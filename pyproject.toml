@@ -1,5 +1,11 @@
 [tool.uv.workspace]
-members = ["packages/mixup-core", "packages/mixup-node", "packages/mixup-orchestrator", "packages/mixup-repl"]
+members = [
+    "packages/mixup-core",
+    "packages/mixup-node",
+    "packages/mixup-orchestrator",
+    "packages/mixup-repl",
+    "packages/mixup-gateway",
+]
 
 [dependency-groups]
 dev = [
@@ -10,7 +16,13 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-src = ["packages/mixup-core/src", "packages/mixup-node/src", "packages/mixup-orchestrator/src"]
+src = [
+    "packages/mixup-core/src",
+    "packages/mixup-node/src",
+    "packages/mixup-orchestrator/src",
+    "packages/mixup-repl/src",
+    "packages/mixup-gateway/src",
+]
 extend-exclude = [".temp"]
 
 [tool.ruff.lint]

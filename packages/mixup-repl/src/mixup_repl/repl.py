@@ -17,17 +17,10 @@ from pathlib import Path
 
 import httpx
 
-from mixup_core.constants import EXTERNAL_PORT_BASE, MODEL_DIR
+from mixup_core.constants import MODEL_DIR
+from mixup_core.hosts import node_urls
 from mixup_core.startup_config import load_startup_config
-from mixup_core.types import GenerateRequest, GenerateResponse, StartupConfig
-
-
-def node_urls(config: StartupConfig) -> dict[str, str]:
-    """Map each node to its host URL, mirroring the orchestrator's port assignment."""
-    urls = {config.initial_leader: f"http://localhost:{EXTERNAL_PORT_BASE}"}
-    for offset, name in enumerate(config.experts):
-        urls[name] = f"http://localhost:{EXTERNAL_PORT_BASE + offset + 1}"
-    return urls
+from mixup_core.types import GenerateRequest, GenerateResponse
 
 
 def pick_leader(projections: list[dict]) -> str | None:
@@ -114,6 +107,27 @@ def _report(
     print(line, file=sys.stderr)
 
 
+def _run_via(gateway_url: str, request: GenerateRequest) -> int:
+    """Send ``request`` through a mixup-gateway, which handles failover for us."""
+    try:
+        response = httpx.post(
+            f"{gateway_url.rstrip('/')}/generate", json=request.model_dump(), timeout=None
+        )
+        response.raise_for_status()
+        result = GenerateResponse(**response.json())
+    except httpx.HTTPError as exc:
+        print(f"gateway {gateway_url} failed ({exc})", file=sys.stderr)
+        return 1
+    _report(
+        result.text,
+        result.tokens,
+        result.elapsed_seconds,
+        result.dense_seconds,
+        result.dispatch_seconds,
+    )
+    return 0
+
+
 def run_local(prompt: str | None, max_new_tokens: int, model_dir: Path) -> int:
     """Load the full model once, then answer one prompt (or an interactive loop)."""
     model = LocalModel(model_dir)
@@ -148,6 +162,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--timeout", type=float, default=2.0, help="per-node discovery timeout (seconds)"
     )
+    parser.add_argument(
+        "--via",
+        default=None,
+        help="route through a mixup-gateway at this URL (e.g. http://localhost:8999)",
+    )
     args = parser.parse_args(argv)
 
     if args.local:
@@ -155,10 +174,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.prompt is None:
         parser.error("a prompt is required unless --local is given")
 
+    request = GenerateRequest(prompt=args.prompt, max_new_tokens=args.max_new_tokens)
+
+    if args.via:
+        return _run_via(args.via, request)
+
     config = load_startup_config(args.config)
     urls = node_urls(config)
-
-    request = GenerateRequest(prompt=args.prompt, max_new_tokens=args.max_new_tokens)
     result = None
     for _ in range(3):
         leader_id = discover_leader(urls, args.timeout)
