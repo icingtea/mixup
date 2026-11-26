@@ -40,3 +40,25 @@ def encode_header(header: LedgerHeader) -> bytes:
 def decode_header(body: bytes) -> LedgerHeader:
     """Deserialize a header from JSON bytes."""
     return LedgerHeader.model_validate_json(body)
+
+
+class Checkpoint(BaseModel):
+    """A token-sequence checkpoint for resume (the plan's replay/recovery path).
+
+    ``input_ids`` is the full sequence so far (prompt + generated); ``kv_seq`` is how many
+    tokens have been generated. A promoted leader re-runs the prefix from these ids and
+    continues, so no generated token is lost — only the prefix forward pass is recomputed.
+    """
+
+    kv_seq: int
+    input_ids: list[int]
+
+
+def encode_checkpoint(checkpoint: Checkpoint) -> bytes:
+    """Serialize a checkpoint to JSON bytes."""
+    return checkpoint.model_dump_json().encode()
+
+
+def decode_checkpoint(body: bytes) -> Checkpoint:
+    """Deserialize a checkpoint from JSON bytes."""
+    return Checkpoint.model_validate_json(body)

@@ -12,12 +12,13 @@ import time
 import requests
 import torch
 from requests.exceptions import RequestException
-from transformers import AutoTokenizer, GraniteMoeConfig, GraniteMoeForCausalLM
+from transformers import AutoTokenizer, GraniteMoeConfig, GraniteMoeForCausalLM, LogitsProcessor
 
-from mixup_core.constants import MODEL_DIR, MODEL_FILE, address
+from mixup_core.constants import CHECKPOINT_FILE, MODEL_DIR, MODEL_FILE, address
 from mixup_core.election import current_leader, promote, should_become_leader
 from mixup_core.env import NodeEnv
 from mixup_core.gossip import Dead, apply_gossip
+from mixup_core.kvledger import Checkpoint, decode_checkpoint, encode_checkpoint
 from mixup_core.runtime import ClusterView, RoutingTable
 from mixup_core.scheduler import LeastLoadedPolicy, handle_node_failure, rebalance_experts
 from mixup_core.types import MemberStatus, NodeRole
@@ -26,6 +27,20 @@ from .dispatch import Dispatcher
 from .model import ExpertGroup, load_central
 
 logger = logging.getLogger(__name__)
+
+
+class _CheckpointProcessor(LogitsProcessor):
+    """Writes the token-sequence checkpoint after each generated token (before sampling)."""
+
+    def __init__(self, prompt_len: int, path) -> None:
+        self.prompt_len = prompt_len
+        self.path = path
+
+    def __call__(self, input_ids, scores):
+        kv_seq = input_ids.shape[1] - self.prompt_len
+        checkpoint = Checkpoint(kv_seq=kv_seq, input_ids=input_ids[0].tolist())
+        self.path.write_text(encode_checkpoint(checkpoint).decode())
+        return scores
 
 
 def broadcast_routing(view: ClusterView, by_node: str) -> None:
@@ -112,14 +127,37 @@ class Node:
 
     # -- generation --------------------------------------------------------
 
-    def _generate(self) -> None:
+    def _generate(self, resume: bool = False) -> None:
         assert self.model is not None and self.tokenizer is not None
         assert self.dispatcher is not None
         self.dispatcher.wait_for_experts()
-        ids = self.tokenizer(self.env.prompt, return_tensors="pt").input_ids
+
+        if resume and CHECKPOINT_FILE.exists():
+            checkpoint = decode_checkpoint(CHECKPOINT_FILE.read_bytes())
+            ids = torch.tensor([checkpoint.input_ids])
+            prompt_len = len(checkpoint.input_ids) - checkpoint.kv_seq
+            remaining = max(0, self.env.max_new_tokens - checkpoint.kv_seq)
+            logger.info(
+                "resuming from checkpoint: kv_seq=%d, %d tokens left",
+                checkpoint.kv_seq,
+                remaining,
+            )
+        else:
+            ids = self.tokenizer(self.env.prompt, return_tensors="pt").input_ids
+            prompt_len = ids.shape[1]
+            remaining = self.env.max_new_tokens
+
+        if remaining <= 0:
+            logger.info("generation already complete")
+            return
+
+        CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        processor = _CheckpointProcessor(prompt_len, CHECKPOINT_FILE)
         with torch.no_grad():
-            out = self.model.generate(ids, max_new_tokens=self.env.max_new_tokens, do_sample=False)
-        logger.info("generated: %s", self.tokenizer.decode(out[0][ids.shape[1] :]))
+            out = self.model.generate(
+                ids, max_new_tokens=remaining, do_sample=False, logits_processor=[processor]
+            )
+        logger.info("generated: %s", self.tokenizer.decode(out[0][prompt_len:]))
 
     # -- watchdog ----------------------------------------------------------
 
@@ -152,5 +190,5 @@ class Node:
                 logger.info("%s: I win the election; promoting to leader", self.name)
                 self.role = NodeRole.LEADER
                 self._become_leader()
-                self._generate()
+                self._generate(resume=True)
                 return

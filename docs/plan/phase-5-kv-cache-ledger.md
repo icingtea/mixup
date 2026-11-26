@@ -163,3 +163,19 @@ not bit-identity with the pre-crash run (which may have used a different placeme
   casts/transfers to the model's dtype/device on load.
 - **Best-effort replication can lose the tail.** Accepted by design; bounded to the gossip
   lag (see above).
+
+## Implementation revisions (holes patched before coding)
+
+1. **Rehydration is deferred; token-sequence replay ships first.** Full `past_key_values`
+   rehydration (path 1) is torch-bound and fragile; for the first milestone the leader
+   checkpoints the *token sequence* (`input_ids` + `kv_seq`) to the shared ledger volume
+   after each token (via a `LogitsProcessor`), and the elected successor re-runs the prefix
+   then continues. This is path 2, promoted to primary: it satisfies "minimal loss" (≤1
+   token recomputed, greedy deterministic) with far less code.
+2. **No gossip-carried ledger yet.** The checkpoint is read from the shared volume, not
+   gossiped, so `kv_seq` does not feed election freshness yet — election still ranks by
+   `(priority, node_id)` (see Phase 3 revisions). Gossip replication of the ledger is the
+   follow-up that makes election freshness-aware.
+3. **Shared volume replaces per-peer replication.** `var/ledger` is bind-mounted read-write
+   into every container; the leader writes, the successor reads. No KV tensors cross the
+   wire in this milestone.

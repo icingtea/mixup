@@ -40,6 +40,9 @@ DEFAULT_CONFIG_PATH = Path("startup_config.json")
 MODELS_DIR = Path("models")
 # Matches the Dockerfile WORKDIR (/usr/local/app) + MODEL_ROOT ("models").
 CONTAINER_MODELS_DIR = "/usr/local/app/models"
+# Read-write ledger volume for the KV/checkpoint resume state.
+LEDGER_DIR = Path("var/ledger")
+CONTAINER_LEDGER_DIR = "/usr/local/app/ledger"
 
 
 def build_image(client: docker.DockerClient) -> Image:
@@ -105,6 +108,7 @@ def start_container(
         prompt=prompt,
         max_new_tokens=max_new_tokens,
     )
+    LEDGER_DIR.mkdir(parents=True, exist_ok=True)
     client.containers.run(
         image=image,
         name=name,
@@ -113,7 +117,10 @@ def start_container(
         ports={f"{INTERNAL_PORT}/tcp": port},
         restart_policy={"Name": "unless-stopped"},
         environment={NODE_ENV_VAR: dump_node_env(node_env)},
-        volumes={str(MODELS_DIR.resolve()): {"bind": CONTAINER_MODELS_DIR, "mode": "ro"}},
+        volumes={
+            str(MODELS_DIR.resolve()): {"bind": CONTAINER_MODELS_DIR, "mode": "ro"},
+            str(LEDGER_DIR.resolve()): {"bind": CONTAINER_LEDGER_DIR, "mode": "rw"},
+        },
     )
     logger.info("STARTED %s", name)
 

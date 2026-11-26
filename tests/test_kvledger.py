@@ -1,6 +1,13 @@
 """Tests for the KV-cache ledger header codec."""
 
-from mixup_core.kvledger import LedgerHeader, decode_header, encode_header
+from mixup_core.kvledger import (
+    Checkpoint,
+    LedgerHeader,
+    decode_checkpoint,
+    decode_header,
+    encode_checkpoint,
+    encode_header,
+)
 
 
 def test_header_roundtrip() -> None:
@@ -14,3 +21,8 @@ def test_header_roundtrip() -> None:
         layer_shapes=[(8, 64), (8, 64)],
     )
     assert decode_header(encode_header(header)) == header
+
+
+def test_checkpoint_roundtrip() -> None:
+    checkpoint = Checkpoint(kv_seq=7, input_ids=[1, 2, 3, 4])
+    assert decode_checkpoint(encode_checkpoint(checkpoint)) == checkpoint

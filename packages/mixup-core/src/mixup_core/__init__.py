@@ -6,11 +6,13 @@ torch/docker/fastapi-free.
 """
 
 from .constants import (
+    CHECKPOINT_FILE,
     EXTERNAL_PORT_BASE,
     HF_MODEL_ID,
     IMAGE_NAME,
     IMAGE_TAG,
     INTERNAL_PORT,
+    LEDGER_DIR,
     MODEL_DIR,
     MODEL_FILE,
     MODEL_NAME,
@@ -42,7 +44,14 @@ from .gossip import (
     merge_views,
 )
 from .gossip_engine import GossipEngine
-from .kvledger import LedgerHeader, decode_header, encode_header
+from .kvledger import (
+    Checkpoint,
+    LedgerHeader,
+    decode_checkpoint,
+    decode_header,
+    encode_checkpoint,
+    encode_header,
+)
 from .runtime import (
     ClusterView,
     LeaderProjection,
@@ -107,6 +116,8 @@ __all__ = [
     "IMAGE_NAME",
     "IMAGE_TAG",
     "INTERNAL_PORT",
+    "CHECKPOINT_FILE",
+    "LEDGER_DIR",
     "MODEL_DIR",
     "MODEL_FILE",
     "MODEL_NAME",
@@ -160,4 +171,7 @@ __all__ = [
     "LedgerHeader",
     "decode_header",
     "encode_header",
+    "Checkpoint",
+    "decode_checkpoint",
+    "encode_checkpoint",
 ]

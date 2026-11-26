@@ -12,6 +12,7 @@ wheels/
 # extra
 models/
 model_chunks/
+var/
 
 # Tool generated files
 .pytest_cache/

@@ -72,3 +72,30 @@ identity (they spin idle with a dead leader in their view), so a second leader f
 isn't handled yet — that's the gossip-leader-announcement work, not in Phase 4.
 
 ---
+
+## Phase 5 — leader failover with resume
+
+Same drill as Phase 4, but now the new leader resumes instead of restarting:
+
+```bash
+docker rm -f container_1 container_2 container_3 container_4 container_5 2>/dev/null
+mixup-orchestrator
+docker logs -f container_2
+# once the central starts generating, in another terminal:
+docker stop container_1
+```
+
+**Expected:** `container_2` logs `resuming from checkpoint: kv_seq=N, M tokens left`
+(not `generated:` from scratch), then produces a completion. The text should match an
+uninterrupted run — greedy decoding is deterministic; resume recomputes the prefix but
+loses ≤1 token's work.
+
+**If it fails:**
+- No `resuming from checkpoint` → the checkpoint wasn't written or the ledger volume isn't
+  mounted. Check `var/ledger/checkpoint.json` exists on the host once the leader starts.
+- Always `kv_seq=0` → the per-token writer isn't running. Check `_CheckpointProcessor` is
+  passed to `model.generate` and the ledger dir is writable (`var/ledger` is rw-mounted).
+- Wrong resume text → the `prompt_len`/`kv_seq` math is off. Check
+  `prompt_len = len(input_ids) - kv_seq`.
+
+---
