@@ -113,7 +113,7 @@ class Node:
             if name == self.name:
                 continue
             try:
-                projection = requests.get(f"{address(name)}/leader", timeout=2).json()
+                projection = requests.get(f"{address(name)}/leader", timeout=0.5).json()
             except (RequestException, ValueError):
                 continue
             leader = projection.get("leader")

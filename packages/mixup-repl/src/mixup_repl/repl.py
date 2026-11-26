@@ -54,6 +54,19 @@ def discover_leader(urls: dict[str, str], timeout: float) -> str | None:
     return pick_leader(projections)
 
 
+def wait_ready(url: str, timeout: float = 30.0) -> bool:
+    """Poll ``/health`` until the node reports ``ready=True`` (or ``timeout`` elapses)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if httpx.get(f"{url}/health", timeout=2).json().get("ready"):
+                return True
+        except httpx.HTTPError:
+            pass
+        time.sleep(1)
+    return False
+
+
 class LocalModel:
     """The whole model in memory, on the GPU, answering prompts in-process."""
 
@@ -153,6 +166,9 @@ def main(argv: list[str] | None = None) -> int:
             print("no leader found (is the cluster running?)", file=sys.stderr)
             return 1
         leader_url = urls[leader_id]
+        if not wait_ready(leader_url):
+            print(f"leader {leader_id} not ready; retrying...", file=sys.stderr)
+            continue
         try:
             response = httpx.post(
                 f"{leader_url}/generate", json=request.model_dump(), timeout=None
