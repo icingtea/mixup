@@ -60,17 +60,31 @@ class _CheckpointProcessor(LogitsProcessor):
 
 
 def broadcast_routing(view: ClusterView, by_node: str) -> None:
-    """Push the current routing table to every alive expert node (so they load new experts)."""
+    """Push the current routing table to every alive expert node (so they load new experts).
+
+    Retries each node a few times: a rejoining node's server may not be listening yet, so
+    a single fire-and-forget push races its boot.
+    """
     table = view.routing
     if table is None:
         return
     payload = table.model_dump()
     for member in view.members.values():
         if member.role is NodeRole.EXPERT and member.status is MemberStatus.ALIVE:
-            try:
-                requests.post(f"{address(member.node_id)}/routing", json=payload, timeout=60)
-                logger.info("broadcast: sent routing epoch %d to %s", table.epoch, member.node_id)
-            except RequestException:
+            sent = False
+            for _ in range(5):
+                try:
+                    requests.post(
+                        f"{address(member.node_id)}/routing", json=payload, timeout=60
+                    )
+                    logger.info(
+                        "broadcast: sent routing epoch %d to %s", table.epoch, member.node_id
+                    )
+                    sent = True
+                    break
+                except RequestException:
+                    time.sleep(1)
+            if not sent:
                 logger.warning("broadcast: could not reach %s during rebalance", member.node_id)
 
 
