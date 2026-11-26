@@ -100,6 +100,8 @@ class Dispatcher:
         total = torch.zeros_like(hidden_states, device="cpu")
         for job in jobs:
             total += job.result()
+        if torch.isnan(total).any() or torch.isinf(total).any():
+            logger.error("expert reduce produced NaN/inf at token %d layer %d", self._token, layer)
         reduce_time = time.perf_counter() - reduce_start
         dispatch_time = time.perf_counter() - t0
 

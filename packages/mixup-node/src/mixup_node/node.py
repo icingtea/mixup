@@ -314,6 +314,8 @@ class Node:
             throughput,
         )
         text = self.tokenizer.decode(out[0][prompt_len:])
+        if torch.isnan(out).any() or torch.isinf(out).any():
+            logger.error("generation output contains NaN/inf — model state corrupted")
         logger.info("generated: %s", text)
         return text, generated, elapsed, dense, dispatch
 
