@@ -72,11 +72,11 @@ Generation is 50 tokens × 24 layers of HTTP round-trips, so it's slow. Do a 1-t
 smoke instead:
 
 ```bash
-MAX_NEW_TOKENS=1 mixup-orchestrator
+mixup-orchestrator --max-new-tokens 1
 ```
 
-(Passing `MAX_NEW_TOKENS`/`PROMPT` requires recreating the containers — stop/rm first,
-or run on a fresh cluster.)
+(Changing `--prompt`/`--max-new-tokens` requires recreating the containers — stop/rm
+first, or run on a fresh cluster.)
 
 ## Troubleshooting
 
@@ -86,7 +86,7 @@ or run on a fresh cluster.)
 | `nix develop` fails on `nvidia-cufile` / `libmlx5.so.1` | don't build the node in Nix (ADR-006); the dev shell already excludes it |
 | `nix develop` fails on `ModuleNotFoundError: editables` | build backend must be `uv_build`, not hatchling (ADR-010) |
 | Central log shows the generation repeating forever | the central is one-shot + `restart_policy: unless-stopped` (ADR-011, open) — stop `container_1` or remove its restart policy |
-| Experts "up" but central produces nothing | generation is just slow; check `docker stats` (experts at high CPU = working), or use `MAX_NEW_TOKENS=1` |
+| Experts "up" but central produces nothing | generation is just slow; check `docker stats` (experts at high CPU = working), or use `--max-new-tokens 1` |
 | "Local directory not empty" from fetch | `models/…` already has files; clear it or use a fresh `--dir` |
 
 ## Architecture summary

@@ -10,7 +10,10 @@ COPY packages ./packages
 
 # Install mixup-node and its workspace dependency mixup-core, frozen to uv.lock,
 # skipping the dev group (ruff/pytest) and the orchestrator (docker).
-RUN uv sync --frozen --no-dev --package mixup-node
+# The uv cache mount persists downloaded wheels across builds, so code-only
+# changes re-run `uv sync` without re-downloading torch.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package mixup-node
 
 ENV PATH="/usr/local/app/.venv/bin:$PATH"
 

@@ -1,25 +1,19 @@
-"""Node entrypoint: run as the central or an expert container, depending on CONTAINER_NAME.
+"""Node entrypoint: run as the central or an expert container.
 
-Run inside every container. The central container loads everything except the experts
-and fans expert work out; each expert container loads only its own experts and serves
-them over HTTP.
+Run inside every container. The runtime environment (container name, cluster layout,
+prompt, token budget) is read from the single MIXUP_NODE_ENV env var, deserialized
+into a typed NodeEnv at bootup.
 """
 
 import logging
-import os
 
 import torch
 from transformers import AutoTokenizer, GraniteMoeConfig
 
-from mixup_core.config import (
-    MAX_NEW_TOKENS_ENV,
-    PROMPT_ENV,
-    container_name_from_env,
-    load_config_from_env,
-)
 from mixup_core.constants import INTERNAL_PORT, MODEL_DIR, MODEL_FILE
+from mixup_core.env import NodeEnv, load_node_env
 from mixup_core.topology import build_lut, validate_partition
-from mixup_core.types import Config, ContainerType, ExpertRoute
+from mixup_core.types import ContainerType, ExpertRoute
 
 from .dispatch import Dispatcher
 from .model import ExpertGroup, load_central
@@ -33,34 +27,32 @@ def _model_config() -> GraniteMoeConfig:
 
 
 def run_central(
-    config: Config,
+    env: NodeEnv,
     model_config: GraniteMoeConfig,
     lut: dict[int, ExpertRoute],
 ) -> None:
     """Load the central model, wait for the experts, and generate one completion."""
-    dispatcher = Dispatcher(config, lut)
+    dispatcher = Dispatcher(env.config, lut)
     model = load_central(model_config, MODEL_FILE, dispatcher)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
     dispatcher.wait_for_experts()
 
-    prompt = os.getenv(PROMPT_ENV, "What is mixture of experts?")
-    max_new_tokens = int(os.getenv(MAX_NEW_TOKENS_ENV, "50"))
-    ids = tokenizer(prompt, return_tensors="pt").input_ids
+    ids = tokenizer(env.prompt, return_tensors="pt").input_ids
     with torch.no_grad():
-        out = model.generate(ids, max_new_tokens=max_new_tokens, do_sample=False)
+        out = model.generate(ids, max_new_tokens=env.max_new_tokens, do_sample=False)
     logger.info(tokenizer.decode(out[0][ids.shape[1] :]))
 
 
 def run_expert(
-    name: str,
+    env: NodeEnv,
     model_config: GraniteMoeConfig,
     lut: dict[int, ExpertRoute],
 ) -> None:
     """Load this container's experts and serve them over HTTP."""
-    group = ExpertGroup(name, model_config, MODEL_FILE, lut)
+    group = ExpertGroup(env.container_name, model_config, MODEL_FILE, lut)
     logger.info(
         "%s: experts %d-%d ready on port %d",
-        name,
+        env.container_name,
         group.experts[0],
         group.experts[-1],
         INTERNAL_PORT,
@@ -69,18 +61,17 @@ def run_expert(
 
 
 def start() -> None:
-    """Start as central or expert, depending on CONTAINER_NAME."""
+    """Deserialize MIXUP_NODE_ENV and start as central or expert."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    name = container_name_from_env()
-    config = load_config_from_env()
+    env = load_node_env()
     model_config = _model_config()
-    lut = build_lut(config)
-    validate_partition(config, model_config.num_local_experts or 0)
+    lut = build_lut(env.config)
+    validate_partition(env.config, model_config.num_local_experts or 0)
 
-    if config.role(name) is ContainerType.CENTRAL:
-        run_central(config, model_config, lut)
+    if env.config.role(env.container_name) is ContainerType.CENTRAL:
+        run_central(env, model_config, lut)
     else:
-        run_expert(name, model_config, lut)
+        run_expert(env, model_config, lut)
 
 
 if __name__ == "__main__":

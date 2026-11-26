@@ -1,7 +1,8 @@
 # Config
 
 The cluster layout is a single JSON document, read from a file by the orchestrator and
-passed (serialized) to every node as the `CONFIG` env var.
+wrapped — with the container identity and generation settings — into a `NodeEnv` that
+is passed to every node as the single `MIXUP_NODE_ENV` env var.
 
 ## Schema (`mixup_core.types.Config`)
 
@@ -52,18 +53,34 @@ See [routing.md](routing.md) for why.
 `ContainerType.EXPERT`. `ContainerType` is a `StrEnum` (`"central"` / `"expert"`).
 The node uses this to decide its behavior.
 
-## Environment variables
+## The runtime environment (`NodeEnv`)
 
-| Env var | Who reads it | Meaning | Default |
+Every runtime setting a node needs is bundled into **one** pydantic model,
+`mixup_core.env.NodeEnv`:
+
+```json
+{
+  "container_name": "container_2",
+  "config": { "central": "container_1", "experts": { "container_2": [0, 1, 2, 3, 4, 5, 6, 7], "…": "…" } },
+  "prompt": "What is mixture of experts?",
+  "max_new_tokens": 50
+}
+```
+
+| Field | Type | Default | Meaning |
 |---|---|---|---|
-| `CONFIG` | node | the serialized `Config` | (required) |
-| `CONTAINER_NAME` | node | this container's name | (required) |
-| `PROMPT` | central | the generation prompt | `"What is mixture of experts?"` |
-| `MAX_NEW_TOKENS` | central | how many tokens to generate | `50` |
+| `container_name` | `str` | (required) | this container's own name (hostname on the network) |
+| `config` | `Config` | (required) | the cluster layout |
+| `prompt` | `str` | `"What is mixture of experts?"` | generation prompt (central only) |
+| `max_new_tokens` | `int` | `50` | tokens to generate (central only) |
 
-The orchestrator sets `CONFIG` and `CONTAINER_NAME` on every container, and forwards
-`PROMPT` / `MAX_NEW_TOKENS` from the host environment when present (so
-`MAX_NEW_TOKENS=1 mixup-orchestrator` produces a fast smoke test).
+The orchestrator builds a `NodeEnv` per container and serializes it (`dump_node_env`)
+into **one** env var, `MIXUP_NODE_ENV`. At bootup the node calls `load_node_env()` to
+deserialize it back into a typed `NodeEnv`. This is the *only* mixup environment
+variable — everything lives in this one model.
+
+Generation settings are passed to the orchestrator as **CLI flags** (`--prompt`,
+`--max-new-tokens`), not env vars.
 
 ## Model constants (`mixup_core.constants`)
 

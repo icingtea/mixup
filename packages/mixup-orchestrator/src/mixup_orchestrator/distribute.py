@@ -1,13 +1,14 @@
 """Host-side orchestrator: build the image and start one container per config entry.
 
-Run from the project root. Every container gets the same image; CONTAINER_NAME and
-CONFIG tell each node which part of the model it holds. The models/ directory is
-mounted read-only into each container instead of being copied into the image.
+Run from the project root. Every container gets the same image and one env var,
+MIXUP_NODE_ENV (a serialized NodeEnv), which tells the node its identity, the cluster
+layout, and the generation settings. The models/ directory is mounted read-only into
+each container instead of being copied into the image.
 """
 
+import argparse
 import logging
-import os
-import sys
+import subprocess
 from pathlib import Path
 
 import docker
@@ -15,13 +16,7 @@ from docker.errors import BuildError, NotFound
 from docker.models.images import Image
 from docker.models.networks import Network
 
-from mixup_core.config import (
-    CONFIG_ENV,
-    CONTAINER_NAME_ENV,
-    MAX_NEW_TOKENS_ENV,
-    PROMPT_ENV,
-    load_config_file,
-)
+from mixup_core.config import load_config_file
 from mixup_core.constants import (
     EXTERNAL_PORT_BASE,
     IMAGE_NAME,
@@ -29,6 +24,13 @@ from mixup_core.constants import (
     INTERNAL_PORT,
     MODEL_FILE,
     NETWORK_NAME,
+)
+from mixup_core.env import (
+    DEFAULT_MAX_NEW_TOKENS,
+    DEFAULT_PROMPT,
+    NODE_ENV_VAR,
+    NodeEnv,
+    dump_node_env,
 )
 from mixup_core.types import Config
 
@@ -41,29 +43,20 @@ CONTAINER_MODELS_DIR = "/usr/local/app/models"
 
 
 def build_image(client: docker.DockerClient) -> Image:
-    """Build the node image, streaming its output in real time."""
+    """Build the node image via `docker build` (BuildKit), streaming output live.
+
+    The SDK's legacy /build endpoint does not run BuildKit, so RUN --mount cache
+    mounts (and fast code-only rebuilds) don't work there. We shell out to the CLI,
+    which uses the BuildKit builder and streams build output directly.
+    """
     logger.info(
         "BUILDING IMAGE %s:%s (first build downloads torch, takes a while)...",
         IMAGE_NAME,
         IMAGE_TAG,
     )
-    # client.api.build() streams live; client.images.build() buffers until the end.
-    stream = client.api.build(
-        path=".",
-        dockerfile="Dockerfile",
-        tag=f"{IMAGE_NAME}:{IMAGE_TAG}",
-        rm=True,
-        forcerm=True,
-        decode=True,
-    )
-    for chunk in stream:
-        if "stream" in chunk:
-            logger.info("%s", chunk["stream"].rstrip("\n"))
-        elif "status" in chunk:
-            detail = chunk.get("progress") or chunk.get("id") or ""
-            logger.info("%s %s", chunk["status"], detail)
-        elif "error" in chunk:
-            raise BuildError(chunk["error"], None)
+    proc = subprocess.run(["docker", "build", "--tag", f"{IMAGE_NAME}:{IMAGE_TAG}", "."])
+    if proc.returncode != 0:
+        raise BuildError(f"docker build failed with exit status {proc.returncode}", None)
     logger.info("BUILT IMAGE %s:%s", IMAGE_NAME, IMAGE_TAG)
     return client.images.get(f"{IMAGE_NAME}:{IMAGE_TAG}")
 
@@ -85,6 +78,8 @@ def start_container(
     name: str,
     port: int,
     config: Config,
+    prompt: str,
+    max_new_tokens: int,
 ) -> None:
     """Start `name` on the cluster network, reachable from the host on `port`."""
     try:
@@ -98,17 +93,12 @@ def start_container(
     except NotFound:
         pass
 
-    environment = {
-        CONTAINER_NAME_ENV: name,
-        CONFIG_ENV: config.model_dump_json(),
-    }
-    prompt = os.getenv(PROMPT_ENV)
-    if prompt:
-        environment[PROMPT_ENV] = prompt
-    max_new_tokens = os.getenv(MAX_NEW_TOKENS_ENV)
-    if max_new_tokens:
-        environment[MAX_NEW_TOKENS_ENV] = max_new_tokens
-
+    node_env = NodeEnv(
+        container_name=name,
+        config=config,
+        prompt=prompt,
+        max_new_tokens=max_new_tokens,
+    )
     client.containers.run(
         image=image,
         name=name,
@@ -116,7 +106,7 @@ def start_container(
         network=NETWORK_NAME,
         ports={f"{INTERNAL_PORT}/tcp": port},
         restart_policy={"Name": "unless-stopped"},
-        environment=environment,
+        environment={NODE_ENV_VAR: dump_node_env(node_env)},
         volumes={str(MODELS_DIR.resolve()): {"bind": CONTAINER_MODELS_DIR, "mode": "ro"}},
     )
     logger.info("STARTED %s", name)
@@ -125,9 +115,20 @@ def start_container(
 def main(argv: list[str] | None = None) -> int:
     """Build the image and start every container in the config."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    args = argv if argv is not None else sys.argv[1:]
-    config_path = Path(args[0]) if args else DEFAULT_CONFIG_PATH
-    config = load_config_file(config_path)
+    parser = argparse.ArgumentParser(description="Build the image and start the cluster.")
+    parser.add_argument(
+        "config", nargs="?", default=str(DEFAULT_CONFIG_PATH), help="path to config.json"
+    )
+    parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="prompt for the central node")
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=DEFAULT_MAX_NEW_TOKENS,
+        help="tokens for the central node to generate",
+    )
+    args = parser.parse_args(argv)
+
+    config = load_config_file(args.config)
 
     if not MODEL_FILE.exists():
         logger.error("model not found at %s", MODEL_FILE)
@@ -138,9 +139,19 @@ def main(argv: list[str] | None = None) -> int:
     image = build_image(client)
     get_or_create_network(client)
 
-    start_container(client, image, config.central, EXTERNAL_PORT_BASE, config)
+    start_container(
+        client, image, config.central, EXTERNAL_PORT_BASE, config, args.prompt, args.max_new_tokens
+    )
     for offset, container_name in enumerate(config.experts):
-        start_container(client, image, container_name, EXTERNAL_PORT_BASE + offset + 1, config)
+        start_container(
+            client,
+            image,
+            container_name,
+            EXTERNAL_PORT_BASE + offset + 1,
+            config,
+            args.prompt,
+            args.max_new_tokens,
+        )
     return 0
 
 

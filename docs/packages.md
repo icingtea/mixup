@@ -8,7 +8,8 @@ packages/
 ├── mixup-core/            # the shared contract (torch-free)
 │   └── src/mixup_core/
 │       ├── types.py        # Config, aliases, ContainerType (StrEnum)
-│       ├── config.py       # load_config_file / load_config_from_env / env names
+│       ├── config.py       # load_config_file (cluster layout from file)
+│       ├── env.py          # NodeEnv model + MIXUP_NODE_ENV (de)serialization
 │       ├── constants.py    # ports, network, model paths, address()
 │       ├── topology.py     # build_lut, validate_partition, experts_for
 │       └── smoketest.py    # `mixup-smoketest` CLI

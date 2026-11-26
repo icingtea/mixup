@@ -180,10 +180,30 @@ specific catches avoid swallowing unrelated bugs.
 
 ---
 
-## ADR-014: Prompt / token budget via environment variables
+## ADR-014: Prompt / token budget via orchestrator CLI flags
 
-**Decision.** `PROMPT` and `MAX_NEW_TOKENS` are read from the environment by the
-central, and the orchestrator forwards them from the host.
+**Decision.** The generation prompt and token budget are fields on `NodeEnv` (with
+defaults) and are set via `mixup-orchestrator --prompt ... --max-new-tokens ...`.
 
-**Why.** It makes the forward pass cheaply testable (`MAX_NEW_TOKENS=1`) without
-recompiling or editing the image.
+**Why.** It makes the forward pass cheaply testable (`--max-new-tokens 1`) without
+recompiling or editing the image, and keeps them in the same single model as the rest
+of the runtime environment (ADR-015).
+
+---
+
+## ADR-015: One runtime environment model, one env var
+
+**Decision.** All runtime settings a node needs (container name, cluster config,
+prompt, token budget) are bundled into one pydantic model, `NodeEnv`
+(`mixup_core.env`), serialized to JSON, and injected into each container as a single
+env var, `MIXUP_NODE_ENV`. The node deserializes it at bootup via `load_node_env()`.
+
+**Why.** The earlier scheme scattered the environment across four env vars (`CONFIG`,
+`CONTAINER_NAME`, `PROMPT`, `MAX_NEW_TOKENS`) whose names were duplicated as magic
+strings across two packages, and the node re-parsed them untyped. One model gives a
+single source of truth in `mixup-core`, one serialization format, and — with the
+`MIXUP_` prefix rule — a clean namespace: the only mixup env var is `MIXUP_NODE_ENV`.
+
+**Consequence.** Generation settings moved from host env vars to CLI flags (ADR-014);
+`load_config_from_env` / `container_name_from_env` were removed in favour of
+`load_node_env`.

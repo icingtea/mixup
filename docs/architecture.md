@@ -63,15 +63,16 @@ token (autoregressive generation).
 3. It builds the image (`Dockerfile`) — installing `mixup-core` + `mixup-node` with
    `uv sync` into the image.
 4. It creates (or reuses) the `cluster` bridge network.
-5. It starts one container per config entry, injecting two env vars:
-   - `CONTAINER_NAME` — this container's own name (its hostname on the network).
-   - `CONFIG` — the full cluster config serialized as JSON (pydantic dump).
+5. It starts one container per config entry, injecting a single env var:
+   - `MIXUP_NODE_ENV` — a serialized `NodeEnv` (container name + cluster config +
+     prompt + token budget), the one runtime contract between host and node.
 6. The host `models/` directory is mounted read-only into every container at
    `/usr/local/app/models`.
 
 ### Node startup (inside a container)
 
-1. Read `CONTAINER_NAME` and parse `CONFIG` into a typed `Config`.
+1. Read `MIXUP_NODE_ENV` and deserialize it into a typed `NodeEnv`
+   (`load_node_env()`).
 2. Load the model's `config.json` (`GraniteMoeConfig.from_pretrained`).
 3. Build the **LUT** (expert → container/slot) from `config.experts`.
 4. `validate_partition` — fail fast if the expert assignment is incomplete or
