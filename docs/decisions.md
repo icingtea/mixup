@@ -94,16 +94,21 @@ libraries (`libmlx5`, `librdmacm`, `libibverbs`) that NixOS doesn't provide — 
 
 ---
 
-## ADR-007: GPU (CUDA) torch wheel
+## ADR-007: CPU torch wheel (for dev speed; GPU later)
 
-**Decision.** Resolve torch from PyPI's default (CUDA-bundled) wheel, not the `cpu`
-index.
+**Decision.** Resolve torch from the `pytorch-cpu` index
+(`https://download.pytorch.org/whl/cpu`), not PyPI's default CUDA-bundled wheel.
 
-**Why.** Inference runs on GPU nodes. PyPI's default `torch` for Linux bundles CUDA 13.
-The CPU wheel would be faster to build but useless for the actual workload.
+**Why.** For development, build/startup speed matters more than GPU inference. PyPI's
+default `torch` for Linux bundles CUDA 13 and pulls ~18 `nvidia-*` packages plus
+`triton` — gigabytes that make every `docker build` slow. The CPU wheel (`torch+cpu`)
+drops all of that, so the image is far smaller and builds much faster.
 
-**Consequence.** The lock pulls ~18 `nvidia-*` packages (~GBs) and `triton`. This makes
-the Docker build slow, and it's also why the dev shell must exclude the node (ADR-006).
+**Consequence.** The lock resolves `torch 2.15.0+cpu` with no `nvidia-*`/`triton`/`cuda`
+packages. To re-enable GPU inference later, point `torch` back at PyPI (remove the
+`pytorch-cpu` index + the `torch` source) and re-lock. Also note this is exactly what
+made the old ADR-006 exclusion moot in principle — though the dev shell still excludes
+`mixup-node` because torch (CPU or GPU) isn't needed host-side.
 
 ---
 

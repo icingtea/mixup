@@ -62,14 +62,16 @@ only needs the host-side tools.
 ## The lockfile
 
 `uv.lock` is regenerated inside the dev shell (`nix develop` → `uv lock`). It pins the
-**GPU** torch wheel (`torch 2.15.0` from PyPI's default CUDA build) plus the workspace
-members. The `dev` dependency group (`ruff`, `pytest`) is declared in `pyproject.toml`;
-note uv2nix's `workspace.deps.all` does not surface it, which is why `ruff`/`pytest`
-are not in the dev shell (run them via `uvx` or a throwaway venv — see
+**CPU** torch wheel (`torch 2.15.0+cpu` from the `pytorch-cpu` index) plus the workspace
+members — no `nvidia-*`/`triton` packages, for fast builds (see ADR-007). The `dev`
+dependency group (`ruff`, `pytest`) is declared in `pyproject.toml`; note uv2nix's
+`workspace.deps.all` does not surface it, which is why `ruff`/`pytest` are not in the
+dev shell (run them via `uvx` or a throwaway venv — see
 [development.md](development.md)).
 
 ## Docker does *not* use Nix
 
 The container image (`Dockerfile`) is a plain `python:3.13` and installs the workspace
-with `uv sync --frozen --no-dev --package mixup-node` (pip/uv, not Nix). So the GPU
-torch wheel works fine there — the NixOS patchelf problem is host-only.
+with `uv sync --frozen --no-dev --package mixup-node` (pip/uv, not Nix), pulling the CPU
+torch wheel from the lock. The NixOS patchelf problem is host-only and, with CPU torch,
+irrelevant anyway.
