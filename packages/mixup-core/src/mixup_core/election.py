@@ -72,3 +72,29 @@ def promote(view: ClusterView, node_id: NodeId) -> ClusterView:
         for name, member in view.members.items()
     }
     return ClusterView(members=members, routing=view.routing)
+
+
+def apply_leader_announcement(view: ClusterView, node_id: NodeId, epoch: int) -> ClusterView:
+    """Adopt ``node_id`` as the leader with the given ``epoch``; demote any other leader.
+
+    A stale announcement (epoch below the current leader's) is ignored. This is what lets
+    a follower learn the *new* leader after a failover, so a second leader failure is also
+    handled (the follower polls the new leader and can promote again).
+    """
+    current = current_leader(view)
+    if current is not None and view.members[current].epoch > epoch:
+        return view  # stale announcement
+
+    members = {
+        name: (
+            member.model_copy(
+                update={"role": NodeRole.LEADER, "epoch": epoch, "status": MemberStatus.ALIVE}
+            )
+            if name == node_id
+            else member.model_copy(update={"role": NodeRole.EXPERT})
+            if member.role is NodeRole.LEADER
+            else member
+        )
+        for name, member in view.members.items()
+    }
+    return ClusterView(members=members, routing=view.routing)

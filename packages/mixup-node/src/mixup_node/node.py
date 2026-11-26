@@ -15,7 +15,12 @@ from requests.exceptions import RequestException
 from transformers import AutoTokenizer, GraniteMoeConfig, GraniteMoeForCausalLM, LogitsProcessor
 
 from mixup_core.constants import CHECKPOINT_FILE, MODEL_DIR, MODEL_FILE, address
-from mixup_core.election import current_leader, promote, should_become_leader
+from mixup_core.election import (
+    apply_leader_announcement,
+    current_leader,
+    promote,
+    should_become_leader,
+)
 from mixup_core.env import NodeEnv
 from mixup_core.gossip import Dead, apply_gossip
 from mixup_core.kvledger import Checkpoint, decode_checkpoint, encode_checkpoint
@@ -109,6 +114,7 @@ class Node:
         self.role = NodeRole.LEADER
         self.ready = True
         logger.info("%s: dense model loaded; I am leader", self.name)
+        self._announce_leader()
 
     def _load_experts(self) -> None:
         assert self.view.routing is not None
@@ -124,6 +130,25 @@ class Node:
             broadcast_routing(self.view, self.name)
         assert new_table is not None
         return new_table
+
+    def accept_leader(self, node_id: str, epoch: int) -> None:
+        """Adopt an announced leader (from another node's POST /leader)."""
+        with self._lock:
+            self.view = apply_leader_announcement(self.view, node_id, epoch)
+
+    def _announce_leader(self) -> None:
+        """Tell every other node we are the leader, so they poll us (and can fail over again)."""
+        with self._lock:
+            me = self.view.members[self.name]
+            epoch = me.epoch
+        payload = {"node_id": self.name, "epoch": epoch}
+        for name in self.view.members:
+            if name == self.name:
+                continue
+            try:
+                requests.post(f"{address(name)}/leader", json=payload, timeout=5)
+            except RequestException:
+                logger.warning("could not announce leader to %s", name)
 
     # -- generation --------------------------------------------------------
 

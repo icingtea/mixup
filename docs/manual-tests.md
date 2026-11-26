@@ -67,9 +67,8 @@ INFO mixup_node.infer: generated: ...
 - Followers never reload the shed experts → the leader's `broadcast_routing` or the
   followers' `POST /routing` is broken.
 
-Known limitation (single-failure only): the other followers don't learn the *new* leader's
-identity (they spin idle with a dead leader in their view), so a second leader failure
-isn't handled yet — that's the gossip-leader-announcement work, not in Phase 4.
+Known limitation removed: the new leader now broadcasts its identity to the other
+followers (`POST /leader`), so they poll *it* and can survive a *second* leader failure.
 
 ---
 

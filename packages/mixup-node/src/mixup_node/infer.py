@@ -41,6 +41,12 @@ def build_app(node: Node) -> FastAPI:
     async def leader() -> dict:
         return leader_projection(node.view).model_dump()
 
+    @app.post("/leader")
+    async def leader_announce(request: Request) -> dict:
+        data = await request.json()
+        node.accept_leader(data["node_id"], data["epoch"])
+        return {"ok": True}
+
     @app.post("/routing")
     async def routing(request: Request) -> dict:
         table = RoutingTable.model_validate(await request.json())

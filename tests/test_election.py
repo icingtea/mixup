@@ -1,6 +1,12 @@
 """Tests for freshness-aware leader election."""
 
-from mixup_core.election import current_leader, elect, promote, should_become_leader
+from mixup_core.election import (
+    apply_leader_announcement,
+    current_leader,
+    elect,
+    promote,
+    should_become_leader,
+)
 from mixup_core.runtime import ClusterView, MemberState
 from mixup_core.types import MemberStatus, NodeRole
 
@@ -107,3 +113,29 @@ def test_promote_bumps_epoch_past_max() -> None:
     )
     out = promote(view, "a")
     assert out.members["a"].epoch == 8
+
+
+def test_apply_leader_announcement_adopts_and_demotes() -> None:
+    view = _view(
+        _member("l", role=NodeRole.LEADER, status=MemberStatus.DEAD, priority=5),
+        _member("a", priority=3),
+    )
+    out = apply_leader_announcement(view, "a", epoch=3)
+    assert out.members["a"].role is NodeRole.LEADER
+    assert out.members["a"].epoch == 3
+    assert out.members["a"].status is MemberStatus.ALIVE
+    assert out.members["l"].role is NodeRole.EXPERT  # demoted
+
+
+def test_apply_leader_announcement_ignores_stale_epoch() -> None:
+    view = ClusterView(
+        members={
+            "l": MemberState(
+                node_id="l", role=NodeRole.LEADER, epoch=7, incarnation=1, priority=5
+            ),
+            "a": _member("a", priority=3),
+        }
+    )
+    out = apply_leader_announcement(view, "a", epoch=3)
+    assert out.members["l"].role is NodeRole.LEADER  # unchanged
+    assert out.members["a"].role is NodeRole.EXPERT
