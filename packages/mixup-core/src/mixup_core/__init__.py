@@ -18,7 +18,7 @@ from .constants import (
     NETWORK_NAME,
     address,
 )
-from .election import elect, leader_projection
+from .election import current_leader, elect, leader_projection, promote, should_become_leader
 from .env import (
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_PROMPT,
@@ -133,6 +133,9 @@ __all__ = [
     "expert_moves",
     "elect",
     "leader_projection",
+    "current_leader",
+    "should_become_leader",
+    "promote",
     "LeastLoadedPolicy",
     "PlacementPolicy",
     "rebalance_experts",

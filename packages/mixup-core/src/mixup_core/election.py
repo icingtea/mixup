@@ -7,7 +7,7 @@ KV-cache ledger, so the winner can resume generation with the least recompute â€
 """
 
 from .runtime import ClusterView, LeaderProjection
-from .types import MemberStatus, NodeId
+from .types import MemberStatus, NodeId, NodeRole
 
 
 def elect(view: ClusterView) -> NodeId | None:
@@ -35,3 +35,40 @@ def leader_projection(view: ClusterView) -> LeaderProjection:
         kv_seq=max((m.kv_seq for m in members), default=0),
         routing_epoch=view.routing.epoch if view.routing else 0,
     )
+
+
+def current_leader(view: ClusterView) -> NodeId | None:
+    """The alive node with role ``LEADER``, else ``None``."""
+    for member in view.members.values():
+        if member.role is NodeRole.LEADER and member.status is MemberStatus.ALIVE:
+            return member.node_id
+    return None
+
+
+def should_become_leader(view: ClusterView, node_id: NodeId) -> bool:
+    """True if there is no alive leader and ``node_id`` is the elected winner.
+
+    Because the rank is a total order, every node with the same view computes the same
+    winner, so the winner simply promotes and everyone else waits â€” no claim/ack needed.
+    """
+    return current_leader(view) is None and elect(view) == node_id
+
+
+def promote(view: ClusterView, node_id: NodeId) -> ClusterView:
+    """Make ``node_id`` the leader (role ``LEADER``, epoch bumped); demote any other leader.
+
+    The new epoch is ``max(member epochs) + 1``, so a resurrected old leader sees the
+    higher epoch and yields (split-brain bound).
+    """
+    new_epoch = max((m.epoch for m in view.members.values()), default=0) + 1
+    members = {
+        name: (
+            member.model_copy(update={"role": NodeRole.LEADER, "epoch": new_epoch})
+            if name == node_id
+            else member.model_copy(update={"role": NodeRole.EXPERT})
+            if member.role is NodeRole.LEADER
+            else member
+        )
+        for name, member in view.members.items()
+    }
+    return ClusterView(members=members, routing=view.routing)

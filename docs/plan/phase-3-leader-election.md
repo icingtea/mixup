@@ -132,3 +132,35 @@ machine.
 - **Symmetric partitions** (both sides elect). Mitigated by epoch + rank; the window is
   bounded and self-heals. We document this explicitly rather than claim it's impossible.
 - **Election storms** after recovery. Mitigated by rank determinism + jitter.
+
+## Implementation revisions (holes patched before coding)
+
+A critical pass found four gaps between the plan above and what's actually buildable;
+these revise the plan before implementation.
+
+1. **Trigger hole — nothing detects the leader's death.** The plan assumes gossip/SWIM
+   notices the leader is `DEAD`, but the gossip loop is not wired into the node runtime.
+   *Revision:* for the first leader-failover milestone, each follower runs a **leader
+   watchdog** that polls the leader's `GET /health`; on timeout it marks the leader dead
+   (via `apply_gossip(Dead)`) and consults the election. The SWIM gossip loop can replace
+   the watchdog later without changing the election logic.
+
+2. **The full bully claim/ack protocol is unnecessary for a deterministic winner.** Because
+   the rank `(kv_seq, priority, node_id)` is a *total order*, every follower computes the
+   same `elect(view)` for a consistent view — so there is no need for candidates, claims,
+   and acks: the follower that equals `elect(view)` simply promotes, everyone else waits.
+   *Revision:* implement `current_leader` / `should_become_leader` (pure, tested) and drop
+   the `LeaderClaim`/`LeaderWin` message dance. Split-brain stays bounded by epoch: a
+   promoted node bumps its epoch, and any node seeing a higher epoch yields.
+
+3. **`kv_seq` is 0 until Phase 5.** Freshness-aware election degenerates to
+   `(priority, node_id)` until the KV-cache ledger exists. *Revision:* keep `elect` as-is
+   (already ranks by `kv_seq` first); it will gain real freshness once Phase 5 lands.
+
+4. **The leader runs no server today.** `run_central` is one-shot (generates and exits);
+   a watchdog needs the leader to serve `GET /health` (and `GET /leader`). *Revision:*
+   the leader becomes a persistent FastAPI server; generation runs on that same process.
+
+The tunables `MIXUP_ELECTION_TIMEOUT`/`MIXUP_ELECTION_JITTER` are not needed for the
+watchdog + deterministic-election design (no claim timeout, no jitter); they remain
+applicable only if the full gossip-triggered bully protocol is adopted later.
