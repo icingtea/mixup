@@ -120,6 +120,8 @@ class ExpertGroup:
         self._lut: dict[int, ExpertRoute] = {}
         self.experts: list[int] = []
         self.layers: list[GraniteMoeExperts] = []
+        self._slot_or_skip: Tensor | None = None
+        self._owned: Tensor | None = None
         self.set_routing(table)
 
     def set_routing(self, table: RoutingTable) -> None:
@@ -132,6 +134,7 @@ class ExpertGroup:
         removed = sorted(set(self.experts) - set(experts))
         self._lut = lut
         self.experts = experts
+        self._slot_or_skip, self._owned = self._mask_tensors()
         # Free the old experts' GPU memory before loading the new set. Repeated
         # rebalances otherwise leave orphaned expert copies cached in the CUDA
         # allocator, which on a shared GPU starves the other containers (OOM /
@@ -149,6 +152,32 @@ class ExpertGroup:
             added,
             removed,
         )
+
+    def _mask_tensors(self) -> tuple[Tensor, Tensor]:
+        """Precompute per-expert dispatch masks (one device copy each).
+
+        ``slot_or_skip[e]`` is the local slot of an owned expert or ``SKIP``; ``owned[e]``
+        is 1.0/0.0. They depend only on the routing table, not on the request, so they
+        are built once here and indexed per request. This replaces the previous
+        per-call work — building two 32-element masks, plus a ``where`` and a
+        ``masked_fill`` — with two gathers, saving several GPU syncs on each of the
+        ~4.4k expert requests per generation.
+        """
+        device = _device()
+        slot_or_skip = torch.tensor(
+            [
+                self._lut[e][1] if self._lut[e][0] == self.name else SKIP
+                for e in range(self.num_experts)
+            ],
+            dtype=torch.int64,
+            device=device,
+        )
+        owned = torch.tensor(
+            [1.0 if self._lut[e][0] == self.name else 0.0 for e in range(self.num_experts)],
+            dtype=torch.bfloat16,
+            device=device,
+        )
+        return slot_or_skip, owned
 
     def _load_all(self) -> list[GraniteMoeExperts]:
         with safe_open(self.model_file, framework="pt") as f:
@@ -181,12 +210,7 @@ class ExpertGroup:
         hidden_states = hidden_states.to(device)
         top_k_index = top_k_index.to(device)
         top_k_weights = top_k_weights.to(device)
-        mine = torch.tensor(
-            [self._lut[e][0] == self.name for e in range(self.num_experts)], device=device
-        )[top_k_index]
-        slot = torch.tensor(
-            [self._lut[e][1] for e in range(self.num_experts)], device=device
-        )[top_k_index]
-        slots = torch.where(mine, slot, SKIP)
-        weights = top_k_weights.masked_fill(~mine, 0)
+        assert self._slot_or_skip is not None and self._owned is not None
+        slots = self._slot_or_skip[top_k_index]
+        weights = top_k_weights * self._owned[top_k_index]
         return self.layers[layer](hidden_states, slots, weights)
