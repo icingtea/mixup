@@ -34,3 +34,41 @@ The *cluster-visible* leader failover (stop the leader, watch a follower take ov
 resume generation) is the **Phase 5 manual test**; Phase 3 only provides the decision logic.
 
 ---
+
+## Phase 4 — leader failover (restart from prompt)
+
+Rebuild + start the cluster, then kill the leader mid-generation:
+
+```bash
+docker rm -f container_1 container_2 container_3 container_4 container_5 2>/dev/null
+mixup-orchestrator
+docker logs -f container_2    # a follower, second terminal
+# once the central starts generating, in a third terminal:
+docker stop container_1
+```
+
+**Expected:** `container_2` (the highest-priority follower) logs, then produces a
+completion (Phase 4 restarts from the prompt — no resume yet):
+
+```
+WARNING mixup_node.node: leader container_1 appears down; checking election
+INFO mixup_node.node: container_2: I win the election; promoting to leader
+INFO mixup_node.node: container_2: shed experts, becoming leader
+INFO mixup_node.node: container_2: dense model loaded; I am leader
+INFO mixup_node.infer: generated: ...
+```
+
+**If it fails:**
+- No `leader ... appears down` log → the watchdog isn't polling. Check `Node._watchdog`
+  (interval, `current_leader`) and that the leader serves `/health`.
+- `I win the election` on more than one follower → split-brain. Check `elect` /
+  `should_become_leader` ranking.
+- Promotion crashes around "dense model loaded" → `load_central` / `Node._become_leader`.
+- Followers never reload the shed experts → the leader's `broadcast_routing` or the
+  followers' `POST /routing` is broken.
+
+Known limitation (single-failure only): the other followers don't learn the *new* leader's
+identity (they spin idle with a dead leader in their view), so a second leader failure
+isn't handled yet — that's the gossip-leader-announcement work, not in Phase 4.
+
+---

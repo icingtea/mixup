@@ -108,14 +108,16 @@ class Dispatcher:
         return ExpertResponse.from_bytes(response.content).out
 
     def wait_for_experts(self) -> None:
-        """Block until every expert node answers its health endpoint."""
+        """Block until every expert node reports it is ready (loaded its experts)."""
         for container in sorted(self.expert_nodes):
             while True:
                 try:
-                    requests.get(f"{address(container)}/health", timeout=2)
-                    break
-                except RequestException:
-                    time.sleep(1)
+                    response = requests.get(f"{address(container)}/health", timeout=2)
+                    if response.json().get("ready"):
+                        break
+                except (RequestException, ValueError):
+                    pass
+                time.sleep(1)
             logger.info("%s is up", container)
 
     def close(self) -> None:

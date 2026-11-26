@@ -1,27 +1,26 @@
-"""Node entrypoint: run as the central/leader or an expert node.
+"""Node entrypoint: run as the leader or an expert node, with failover.
 
 Run inside every container. The runtime environment (container name, startup layout,
-prompt, token budget) is read from the single MIXUP_NODE_ENV env var, deserialized
-into a typed NodeEnv at bootup.
+prompt, token budget) is read from the single MIXUP_NODE_ENV env var. Every node serves a
+persistent FastAPI app (health, leader, routing, expert); a background control thread runs
+generation (leader) or the leader watchdog (follower).
 """
 
 import logging
+import threading
 
-import requests
-import torch
-from requests.exceptions import RequestException
-from transformers import AutoTokenizer, GraniteMoeConfig
+import uvicorn
+from fastapi import FastAPI, Request, Response
+from transformers import GraniteMoeConfig
 
-from mixup_core.constants import INTERNAL_PORT, MODEL_DIR, MODEL_FILE, address
-from mixup_core.env import NodeEnv, load_node_env
-from mixup_core.runtime import ClusterView, expert_moves
-from mixup_core.scheduler import handle_node_failure
+from mixup_core.constants import INTERNAL_PORT, MODEL_DIR
+from mixup_core.election import leader_projection
+from mixup_core.env import load_node_env
+from mixup_core.runtime import RoutingTable
 from mixup_core.topology import cluster_view_from_config, validate_partition
-from mixup_core.types import MemberStatus, NodeRole
 
-from .dispatch import Dispatcher
-from .model import ExpertGroup, load_central
-from .server import serve
+from .node import Node
+from .serialization import ExpertRequest, ExpertResponse
 
 logger = logging.getLogger(__name__)
 
@@ -30,102 +29,52 @@ def _model_config() -> GraniteMoeConfig:
     return GraniteMoeConfig.from_pretrained(MODEL_DIR)
 
 
-def broadcast_routing(view: ClusterView, by_node: str) -> None:
-    """Push the current routing table to every alive expert node (so they load new experts)."""
-    table = view.routing
-    if table is None:
-        return
-    payload = table.model_dump()
-    for member in view.members.values():
-        if member.role is NodeRole.EXPERT and member.status is MemberStatus.ALIVE:
-            try:
-                requests.post(f"{address(member.node_id)}/routing", json=payload, timeout=60)
-                logger.info("broadcast: sent routing epoch %d to %s", table.epoch, member.node_id)
-            except RequestException:
-                logger.warning("broadcast: could not reach %s during rebalance", member.node_id)
+def build_app(node: Node) -> FastAPI:
+    """A FastAPI app exposing health, leader, routing, and the expert endpoint."""
+    app = FastAPI()
 
+    @app.get("/health")
+    async def health() -> dict:
+        return {"status": "ok", "ready": node.ready}
 
-def run_central(env: NodeEnv, model_config: GraniteMoeConfig, view: ClusterView) -> None:
-    """Load the central model, wait for the experts, and generate one completion."""
+    @app.get("/leader")
+    async def leader() -> dict:
+        return leader_projection(node.view).model_dump()
 
-    def on_failure(node: str):
-        nonlocal view
-        old = view.routing
-        view = handle_node_failure(view, node, by_node=env.container_name)
-        new = view.routing
-        assert old is not None and new is not None
+    @app.post("/routing")
+    async def routing(request: Request) -> dict:
+        table = RoutingTable.model_validate(await request.json())
+        if node.expert_group is not None:
+            logger.info("routing: received table epoch=%d", table.epoch)
+            node.expert_group.set_routing(table)
+        return {"ok": True}
 
-        moves = expert_moves(old, new)
-        by_owner: dict[str, list[int]] = {}
-        for expert, _old_owner, owner in moves:
-            by_owner.setdefault(owner, []).append(expert)
-
-        logger.warning(
-            "FAILOVER: %s is dead; reassigned %d experts (routing epoch %d)",
-            node,
-            len(moves),
-            new.epoch,
+    @app.post("/{layer}")
+    async def run(layer: int, request: Request) -> Response:
+        if node.expert_group is None:
+            return Response(status_code=404)
+        req = ExpertRequest.from_bytes(await request.body())
+        out = node.expert_group.forward(
+            layer, req.hidden_states, req.top_k_index, req.top_k_weights
         )
-        for owner in sorted(by_owner):
-            logger.info("  -> %s now holds experts %s", owner, sorted(by_owner[owner]))
+        return Response(ExpertResponse(out=out).to_bytes())
 
-        broadcast_routing(view, env.container_name)
-        return new
-
-    assert view.routing is not None
-    dispatcher = Dispatcher(env.container_name, view.routing, on_failure)
-    model = load_central(model_config, MODEL_FILE, dispatcher)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
-    dispatcher.wait_for_experts()
-
-    ids = tokenizer(env.prompt, return_tensors="pt").input_ids
-    with torch.no_grad():
-        out = model.generate(ids, max_new_tokens=env.max_new_tokens, do_sample=False)
-    logger.info("generated: %s", tokenizer.decode(out[0][ids.shape[1] :]))
-
-
-def run_expert(env: NodeEnv, model_config: GraniteMoeConfig, view: ClusterView) -> None:
-    """Load this node's experts and serve them (with failover reload) over HTTP."""
-    assert view.routing is not None
-    group = ExpertGroup(env.container_name, model_config, MODEL_FILE, view.routing)
-    logger.info(
-        "%s: %d experts ready on port %d",
-        env.container_name,
-        len(group.experts),
-        INTERNAL_PORT,
-    )
-    serve(group, INTERNAL_PORT)
+    return app
 
 
 def start() -> None:
-    """Deserialize MIXUP_NODE_ENV and start as the leader or an expert node."""
+    """Deserialize MIXUP_NODE_ENV and start the server + control loop."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     env = load_node_env()
     model_config = _model_config()
     validate_partition(env.config, model_config.num_local_experts or 0)
     view = cluster_view_from_config(env.config)
 
-    role = env.config.initial_role(env.container_name)
-    logger.info("%s boot: role=%s, epoch=0", env.container_name, role.value)
-    assert view.routing is not None
-    if role is NodeRole.LEADER:
-        owners = {r.node_id for r in view.routing.assignment.values()}
-        logger.info(
-            "%s boot: %d experts across %d expert nodes",
-            env.container_name,
-            len(view.routing.assignment),
-            len(owners),
-        )
-    else:
-        experts = sorted(
-            e for e, r in view.routing.assignment.items() if r.node_id == env.container_name
-        )
-        logger.info("%s boot: experts=%s", env.container_name, experts)
+    node = Node(env, model_config, view)
+    logger.info("%s boot: role=%s", env.container_name, node.role.value)
 
-    if role is NodeRole.LEADER:
-        run_central(env, model_config, view)
-    else:
-        run_expert(env, model_config, view)
+    threading.Thread(target=node.run, daemon=True).start()
+    uvicorn.run(build_app(node), host="0.0.0.0", port=INTERNAL_PORT, log_level="warning")
 
 
 if __name__ == "__main__":
