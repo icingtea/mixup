@@ -140,3 +140,18 @@ def test_leader_projection_empty_view() -> None:
     assert proj.epoch == 0
     assert proj.kv_seq == 0
     assert proj.routing_epoch == 0
+
+
+def test_leader_projection_prefers_current_leader_over_priority() -> None:
+    view = ClusterView(
+        members={
+            "old": MemberState(
+                node_id="old", role=NodeRole.EXPERT, epoch=0, incarnation=1, priority=9
+            ),
+            "cur": MemberState(
+                node_id="cur", role=NodeRole.LEADER, epoch=1, incarnation=1, priority=1
+            ),
+        }
+    )
+    # "old" has higher static priority but demoted; the projection must report "cur".
+    assert leader_projection(view).leader == "cur"

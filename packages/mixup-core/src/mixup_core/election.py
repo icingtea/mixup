@@ -25,12 +25,14 @@ def elect(view: ClusterView) -> NodeId | None:
 def leader_projection(view: ClusterView) -> LeaderProjection:
     """Project the view into the fields a client needs to discover the leader.
 
-    ``leader`` is the highest-ranked alive member (see ``elect``); the rest are the
-    current maximums across the view, so a client can compare epochs/kv_seq between nodes.
+    ``leader`` is the *current* leader (the alive ``LEADER``-role node), falling back to
+    ``elect`` only when there is none (mid-election). We must not use ``elect`` directly:
+    it ranks by static priority, so a demoted former leader (higher priority) would still
+    be reported as leader after a failover.
     """
     members = view.members.values()
     return LeaderProjection(
-        leader=elect(view),
+        leader=current_leader(view) or elect(view),
         epoch=max((m.epoch for m in members), default=0),
         kv_seq=max((m.kv_seq for m in members), default=0),
         routing_epoch=view.routing.epoch if view.routing else 0,
