@@ -3,12 +3,13 @@
 import pytest
 
 from mixup_core.topology import build_lut, experts_for, validate_partition
-from mixup_core.types import Config
+from mixup_core.types import StartupConfig
 
 
-def _config() -> Config:
-    return Config(
-        central="container_1",
+def _config() -> StartupConfig:
+    return StartupConfig(
+        initial_leader="container_1",
+        nodes=["container_1", "container_2", "container_3"],
         experts={
             "container_2": [0, 1, 2, 3],
             "container_3": [4, 5, 6, 7],
@@ -35,12 +36,20 @@ def test_validate_partition_ok() -> None:
 
 
 def test_validate_partition_missing() -> None:
-    config = Config(central="c1", experts={"c2": [0, 1], "c3": [4, 5]})
+    config = StartupConfig(
+        initial_leader="c1",
+        nodes=["c1", "c2", "c3"],
+        experts={"c2": [0, 1], "c3": [4, 5]},
+    )
     with pytest.raises(ValueError, match="does not cover"):
         validate_partition(config, num_experts=8)
 
 
 def test_validate_partition_non_contiguous() -> None:
-    config = Config(central="c1", experts={"c2": [0, 1, 3, 4], "c3": [2, 5, 6, 7]})
+    config = StartupConfig(
+        initial_leader="c1",
+        nodes=["c1", "c2", "c3"],
+        experts={"c2": [0, 1, 3, 4], "c3": [2, 5, 6, 7]},
+    )
     with pytest.raises(ValueError, match="not contiguous"):
         validate_partition(config, num_experts=8)

@@ -5,7 +5,6 @@ mixup-orchestrator (host) and mixup-node (in-container). Deliberately
 torch/docker/fastapi-free.
 """
 
-from .config import load_config_file
 from .constants import (
     EXTERNAL_PORT_BASE,
     HF_MODEL_ID,
@@ -27,23 +26,24 @@ from .env import (
     dump_node_env,
     load_node_env,
 )
+from .startup_config import load_startup_config
 from .topology import build_lut, expert_containers, experts_for, validate_partition
 from .types import (
-    Config,
     ContainerName,
-    ContainerType,
     ExpertAlloc,
     ExpertId,
     ExpertList,
     ExpertRoute,
+    NodeRole,
+    StartupConfig,
 )
 
 __version__ = "0.1.0"
 
 __all__ = [
-    "Config",
     "ContainerName",
-    "ContainerType",
+    "NodeRole",
+    "StartupConfig",
     "ExpertAlloc",
     "ExpertId",
     "ExpertList",
@@ -67,7 +67,7 @@ __all__ = [
     "dump_node_env",
     "expert_containers",
     "experts_for",
-    "load_config_file",
+    "load_startup_config",
     "load_node_env",
     "validate_partition",
 ]

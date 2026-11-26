@@ -16,7 +16,6 @@ from docker.errors import BuildError, NotFound
 from docker.models.images import Image
 from docker.models.networks import Network
 
-from mixup_core.config import load_config_file
 from mixup_core.constants import (
     EXTERNAL_PORT_BASE,
     IMAGE_NAME,
@@ -32,11 +31,12 @@ from mixup_core.env import (
     NodeEnv,
     dump_node_env,
 )
-from mixup_core.types import Config
+from mixup_core.startup_config import load_startup_config
+from mixup_core.types import StartupConfig
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_PATH = Path("config.json")
+DEFAULT_CONFIG_PATH = Path("startup_config.json")
 MODELS_DIR = Path("models")
 # Matches the Dockerfile WORKDIR (/usr/local/app) + MODEL_ROOT ("models").
 CONTAINER_MODELS_DIR = "/usr/local/app/models"
@@ -77,7 +77,7 @@ def start_container(
     image: Image,
     name: str,
     port: int,
-    config: Config,
+    config: StartupConfig,
     prompt: str,
     max_new_tokens: int,
 ) -> None:
@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    config = load_config_file(args.config)
+    config = load_startup_config(args.config)
 
     if not MODEL_FILE.exists():
         logger.error("model not found at %s", MODEL_FILE)
@@ -140,7 +140,13 @@ def main(argv: list[str] | None = None) -> int:
     get_or_create_network(client)
 
     start_container(
-        client, image, config.central, EXTERNAL_PORT_BASE, config, args.prompt, args.max_new_tokens
+        client,
+        image,
+        config.initial_leader,
+        EXTERNAL_PORT_BASE,
+        config,
+        args.prompt,
+        args.max_new_tokens,
     )
     for offset, container_name in enumerate(config.experts):
         start_container(

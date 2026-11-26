@@ -1,14 +1,15 @@
-# Config
+# Startup config
 
-The cluster layout is a single JSON document, read from a file by the orchestrator and
-wrapped — with the container identity and generation settings — into a `NodeEnv` that
-is passed to every node as the single `MIXUP_NODE_ENV` env var.
+The cluster layout is a single JSON document (`startup_config.json`), read from a file by
+the orchestrator and wrapped — with the container identity and generation settings — into
+a `NodeEnv` that is passed to every node as the single `MIXUP_NODE_ENV` env var.
 
-## Schema (`mixup_core.types.Config`)
+## Schema (`mixup_core.types.StartupConfig`)
 
 ```json
 {
-  "central": "container_1",
+  "initial_leader": "container_1",
+  "nodes": ["container_1", "container_2", "container_3", "container_4", "container_5"],
   "experts": {
     "container_2": [0, 1, 2, 3, 4, 5, 6, 7],
     "container_3": [8, 9, 10, 11, 12, 13, 14, 15],
@@ -20,20 +21,21 @@ is passed to every node as the single `MIXUP_NODE_ENV` env var.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `central` | `str` | Container that runs everything except the experts. |
-| `experts` | `dict[str, list[int]]` | Expert container name → the expert indices it holds. |
+| `initial_leader` | `str` | Node that starts as the generation leader (runs everything except the experts). |
+| `nodes` | `list[str]` | The full membership roster (leader + expert nodes). |
+| `experts` | `dict[str, list[int]]` | Expert node name → the expert indices it holds. |
 
 Type aliases (from `mixup_core.types`): `ContainerName = str`, `ExpertId = int`,
 `ExpertList = list[int]`, `ExpertAlloc = dict[str, list[int]]`,
-`ExpertRoute = tuple[str, int]` (container, local slot).
+`ExpertRoute = tuple[str, int]` (node, local slot).
 
 ## Pydantic validation (core-level, model-agnostic)
 
-`Config` rejects, at parse time:
+`StartupConfig` rejects, at parse time:
 
-- **Duplicate experts** — the same expert id appearing on more than one container
+- **Duplicate experts** — the same expert id appearing on more than one node
   (a `field_validator` on `experts`).
-- **Central also in `experts`** — the central holds no experts (a `model_validator`).
+- **Leader also in `experts`** — the leader holds no experts (a `model_validator`).
 
 These are the invariants that hold regardless of which model is used.
 
@@ -42,16 +44,16 @@ These are the invariants that hold regardless of which model is used.
 On startup, the node additionally runs `validate_partition(config, num_experts)` with
 `num_experts` from the model config (32). It rejects:
 
-- **Incomplete coverage** — some expert in `0..31` assigned to no container.
-- **Non-contiguous blocks** — a container's experts not forming one ascending run.
+- **Incomplete coverage** — some expert in `0..31` assigned to no node.
+- **Non-contiguous blocks** — a node's experts not forming one ascending run.
 
 See [routing.md](routing.md) for why.
 
-## `role()`
+## `initial_role()`
 
-`Config.role(name)` returns `ContainerType.CENTRAL` if `name == central`, else
-`ContainerType.EXPERT`. `ContainerType` is a `StrEnum` (`"central"` / `"expert"`).
-The node uses this to decide its behavior.
+`StartupConfig.initial_role(name)` returns `NodeRole.LEADER` if `name == initial_leader`,
+else `NodeRole.EXPERT`. `NodeRole` is a `StrEnum` (`"leader"` / `"expert"`). The node uses
+this to decide its startup behavior.
 
 ## The runtime environment (`NodeEnv`)
 
@@ -61,7 +63,11 @@ Every runtime setting a node needs is bundled into **one** pydantic model,
 ```json
 {
   "container_name": "container_2",
-  "config": { "central": "container_1", "experts": { "container_2": [0, 1, 2, 3, 4, 5, 6, 7], "…": "…" } },
+  "config": {
+    "initial_leader": "container_1",
+    "nodes": ["container_1", "container_2", "container_3", "container_4", "container_5"],
+    "experts": { "container_2": [0, 1, 2, 3, 4, 5, 6, 7], "…": "…" }
+  },
   "prompt": "What is mixture of experts?",
   "max_new_tokens": 50
 }
@@ -70,9 +76,9 @@ Every runtime setting a node needs is bundled into **one** pydantic model,
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `container_name` | `str` | (required) | this container's own name (hostname on the network) |
-| `config` | `Config` | (required) | the cluster layout |
-| `prompt` | `str` | `"What is mixture of experts?"` | generation prompt (central only) |
-| `max_new_tokens` | `int` | `50` | tokens to generate (central only) |
+| `config` | `StartupConfig` | (required) | the startup cluster layout |
+| `prompt` | `str` | `"What is mixture of experts?"` | generation prompt (leader only) |
+| `max_new_tokens` | `int` | `50` | tokens to generate (leader only) |
 
 The orchestrator builds a `NodeEnv` per container and serializes it (`dump_node_env`)
 into **one** env var, `MIXUP_NODE_ENV`. At bootup the node calls `load_node_env()` to

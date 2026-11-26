@@ -10,7 +10,7 @@ import os
 
 from pydantic import BaseModel
 
-from .types import Config, ContainerName
+from .types import ContainerName, StartupConfig
 
 NODE_ENV_VAR = "MIXUP_NODE_ENV"
 """The single environment variable carrying a serialized NodeEnv for a container."""
@@ -25,8 +25,8 @@ class NodeEnv(BaseModel):
     container_name: ContainerName
     """This container's own name (its hostname on the Docker network)."""
 
-    config: Config
-    """The cluster layout: which container is central, which experts each holds."""
+    config: StartupConfig
+    """The startup cluster layout: which node starts as leader, which experts each holds."""
 
     prompt: str = DEFAULT_PROMPT
     """The generation prompt (used by the central node)."""

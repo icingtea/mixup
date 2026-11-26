@@ -16,9 +16,10 @@ source dirs, `.temp` is excluded.
 
 `pytest` (in `tests/`). The tests cover the pure, torch-free parts:
 
-- `test_config.py` — `Config` validation (duplicates, central-in-experts) and loading.
+- `test_config.py` — `StartupConfig` validation (duplicates, leader-in-experts) and loading.
 - `test_topology.py` — `build_lut`, `experts_for`, `validate_partition`
   (coverage + contiguity failures).
+- `test_env.py` — `NodeEnv` (de)serialization round-trip and defaults.
 
 `pytest` is in the lock's `dev` group but not surfaced into the dev shell by uv2nix
 (see [nix-and-uv.md](nix-and-uv.md)), so run tests with a throwaway venv:
@@ -51,12 +52,12 @@ uv lock          # UV_NO_SYNC=1 is set, so this just writes uv.lock
 - **No module-level side effects** in `mixup-node` — state is passed in
   (`model_config`, `model_file`, `lut`) rather than read from globals.
 - **`logging`**, not `print`; **specific exceptions**, not bare `except`.
-- **Config as the single source of truth** for routing (no `// %` heuristics).
+- **StartupConfig as the single source of truth** for routing (no `// %` heuristics).
 - **Pydantic models**, not `TypedDict`, for data contracts.
 
 ## Adding an expert node
 
-1. Add its block to `config.json` (`"container_6": [32..39]` etc.) — keep the expert
+1. Add its block to `startup_config.json` (`"container_6": [32..39]` etc.) — keep the expert
    lists contiguous and covering the full `0..31` range.
 2. Re-run `mixup-smoketest` to confirm the partition.
 3. Re-run `mixup-orchestrator` — it starts the new container automatically and the

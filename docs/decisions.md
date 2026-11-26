@@ -26,7 +26,7 @@ installable and dependency isolation is lost); a `mixup-core` + single `mixup` a
 in `mixup-node`.
 
 **Why.** The core is the *contract* shared by host and container: types, constants,
-config, routing. Routing is a pure function of `Config`, so it belongs here and is
+config, routing. Routing is a pure function of `StartupConfig`, so it belongs here and is
 unit-testable without installing torch. Keeping torch out means the host-side
 orchestrator (which pulls in `mixup-core`) never downloads a 500 MB wheel.
 

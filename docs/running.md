@@ -27,7 +27,7 @@ mixup-smoketest
 Prints the expert-to-node assignment and verifies coverage/contiguity (exit 0 = OK):
 
 ```
-central: container_1
+initial_leader: container_1
 experts:
   container_2: [0..7]    (8 experts)
   container_3: [8..15]   (8 experts)

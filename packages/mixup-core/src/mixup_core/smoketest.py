@@ -7,7 +7,7 @@ which is exactly what decides which node loads which experts.
 import argparse
 import sys
 
-from .config import load_config_file
+from .startup_config import load_startup_config
 from .topology import build_lut, validate_partition
 
 # granite-3.1-1b-a400m-instruct has 32 local experts per layer.
@@ -18,14 +18,14 @@ def main(argv: list[str] | None = None) -> int:
     """Print the expert-to-node assignment and verify it is complete and contiguous."""
     parser = argparse.ArgumentParser(description="Verify the expert-to-node routing.")
     parser.add_argument(
-        "config", nargs="?", default="config.json", help="path to the cluster config"
+        "config", nargs="?", default="startup_config.json", help="path to the cluster config"
     )
     parser.add_argument("--num-experts", type=int, default=DEFAULT_NUM_EXPERTS)
     args = parser.parse_args(argv)
 
-    config = load_config_file(args.config)
+    config = load_startup_config(args.config)
 
-    print(f"central: {config.central}")
+    print(f"initial_leader: {config.initial_leader}")
     print("experts:")
     for name, experts in config.experts.items():
         if not experts:

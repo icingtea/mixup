@@ -58,7 +58,7 @@ token (autoregressive generation).
 
 ### Startup (orchestrator → nodes)
 
-1. `mixup-orchestrator` reads `config.json`.
+1. `mixup-orchestrator` reads `startup_config.json`.
 2. It checks the model file exists (see [running.md](running.md)).
 3. It builds the image (`Dockerfile`) — installing `mixup-core` + `mixup-node` with
    `uv sync` into the image.
@@ -77,8 +77,8 @@ token (autoregressive generation).
 3. Build the **LUT** (expert → container/slot) from `config.experts`.
 4. `validate_partition` — fail fast if the expert assignment is incomplete or
    non-contiguous (see [routing.md](routing.md)).
-5. Branch on `config.role(name)`:
-   - **central** → build the full model on the `meta` device, swap each layer's
+5. Branch on `config.initial_role(name)`:
+   - **leader** → build the full model on the `meta` device, swap each layer's
      experts for an `ExpertSlot`, load the non-expert weights, then wait for experts
      and generate.
    - **expert** → build an `ExpertGroup` (only this container's experts, for every

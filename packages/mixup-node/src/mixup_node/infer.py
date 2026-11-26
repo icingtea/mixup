@@ -13,7 +13,7 @@ from transformers import AutoTokenizer, GraniteMoeConfig
 from mixup_core.constants import INTERNAL_PORT, MODEL_DIR, MODEL_FILE
 from mixup_core.env import NodeEnv, load_node_env
 from mixup_core.topology import build_lut, validate_partition
-from mixup_core.types import ContainerType, ExpertRoute
+from mixup_core.types import ExpertRoute, NodeRole
 
 from .dispatch import Dispatcher
 from .model import ExpertGroup, load_central
@@ -68,7 +68,7 @@ def start() -> None:
     lut = build_lut(env.config)
     validate_partition(env.config, model_config.num_local_experts or 0)
 
-    if env.config.role(env.container_name) is ContainerType.CENTRAL:
+    if env.config.initial_role(env.container_name) is NodeRole.LEADER:
         run_central(env, model_config, lut)
     else:
         run_expert(env, model_config, lut)

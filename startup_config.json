@@ -1,5 +1,12 @@
 {
-    "central": "container_1",
+    "initial_leader": "container_1",
+    "nodes": [
+        "container_1",
+        "container_2",
+        "container_3",
+        "container_4",
+        "container_5"
+    ],
     "experts": {
         "container_2": [
             0,

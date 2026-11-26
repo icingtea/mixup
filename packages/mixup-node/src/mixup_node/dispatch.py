@@ -11,7 +11,7 @@ from torch import Tensor
 
 from mixup_core.constants import address
 from mixup_core.topology import expert_containers
-from mixup_core.types import Config, ExpertRoute
+from mixup_core.types import ExpertRoute, StartupConfig
 
 from .serialization import ExpertRequest, ExpertResponse
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class Dispatcher:
     """Runs each token's chosen experts on the containers that hold them, in parallel."""
 
-    def __init__(self, config: Config, lut: dict[int, ExpertRoute]) -> None:
+    def __init__(self, config: StartupConfig, lut: dict[int, ExpertRoute]) -> None:
         self.lut = lut
         self.containers = expert_containers(config)
         self._pool = ThreadPoolExecutor(max_workers=len(self.containers))

@@ -7,8 +7,8 @@ dependency weight*, not by layering.
 packages/
 ├── mixup-core/            # the shared contract (torch-free)
 │   └── src/mixup_core/
-│       ├── types.py        # Config, aliases, ContainerType (StrEnum)
-│       ├── config.py       # load_config_file (cluster layout from file)
+│       ├── types.py        # StartupConfig, aliases, NodeRole (StrEnum)
+│       ├── startup_config.py# load_startup_config (startup layout from file)
 │       ├── env.py          # NodeEnv model + MIXUP_NODE_ENV (de)serialization
 │       ├── constants.py    # ports, network, model paths, address()
 │       ├── topology.py     # build_lut, validate_partition, experts_for
@@ -43,9 +43,9 @@ wheel.
 
 | Concern | Package | Why |
 |---|---|---|
-| `Config`, aliases, enums | core | both host and node parse it |
+| `StartupConfig`, aliases, enums | core | both host and node parse it |
 | env-var names, ports, network, model paths, `address()` | core | host and node must agree |
-| LUT / partition validation | core | pure function of `Config`, unit-testable without torch |
+| LUT / partition validation | core | pure function of `StartupConfig`, unit-testable without torch |
 | model construction, expert slicing, `SKIP` | node | torch/transformers internals |
 | wire types / safetensors | node | tensors |
 | HTTP client / server | node | container-to-container |

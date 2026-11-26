@@ -1,33 +1,46 @@
-"""Tests for the cluster Config model and its loading."""
+"""Tests for the StartupConfig model and its loading."""
 
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from mixup_core.config import load_config_file
-from mixup_core.types import Config, ContainerType
+from mixup_core.startup_config import load_startup_config
+from mixup_core.types import NodeRole, StartupConfig
+
+
+def _config(**overrides: object) -> StartupConfig:
+    base: dict[str, object] = {
+        "initial_leader": "container_1",
+        "nodes": ["container_1", "container_2", "container_3"],
+        "experts": {"container_2": [0, 1], "container_3": [2, 3]},
+    }
+    base.update(overrides)
+    return StartupConfig(**base)
 
 
 def test_valid_config_roles() -> None:
-    config = Config(central="container_1", experts={"container_2": [0, 1], "container_3": [2, 3]})
-    assert config.role("container_1") is ContainerType.CENTRAL
-    assert config.role("container_2") is ContainerType.EXPERT
+    config = _config()
+    assert config.initial_role("container_1") is NodeRole.LEADER
+    assert config.initial_role("container_2") is NodeRole.EXPERT
 
 
 def test_duplicate_expert_rejected() -> None:
     with pytest.raises(ValidationError):
-        Config(central="c1", experts={"c2": [0, 1], "c3": [1, 2]})
+        _config(experts={"container_2": [0, 1], "container_3": [1, 2]})
 
 
-def test_central_cannot_hold_experts() -> None:
+def test_leader_cannot_hold_experts() -> None:
     with pytest.raises(ValidationError):
-        Config(central="c1", experts={"c1": [0, 1], "c2": [2, 3]})
+        _config(experts={"container_1": [0, 1], "container_2": [2, 3]})
 
 
-def test_load_config_file(tmp_path: Path) -> None:
-    path = tmp_path / "config.json"
-    path.write_text('{"central": "c1", "experts": {"c2": [0, 1]}}')
-    config = load_config_file(path)
-    assert config.central == "c1"
+def test_load_startup_config(tmp_path: Path) -> None:
+    path = tmp_path / "startup_config.json"
+    path.write_text(
+        '{"initial_leader": "c1", "nodes": ["c1", "c2"], "experts": {"c2": [0, 1]}}'
+    )
+    config = load_startup_config(path)
+    assert config.initial_leader == "c1"
+    assert config.nodes == ["c1", "c2"]
     assert config.experts == {"c2": [0, 1]}
