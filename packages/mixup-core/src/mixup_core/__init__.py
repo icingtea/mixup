@@ -39,6 +39,7 @@ from .gossip import (
     apply_gossip,
     merge_views,
 )
+from .gossip_engine import GossipEngine
 from .kvledger import LedgerHeader, decode_header, encode_header
 from .runtime import (
     ClusterView,
@@ -125,6 +126,7 @@ __all__ = [
     "Suspect",
     "apply_gossip",
     "merge_views",
+    "GossipEngine",
     # kv ledger
     "LedgerHeader",
     "decode_header",
