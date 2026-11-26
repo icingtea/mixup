@@ -145,3 +145,28 @@ def merge_views(local: ClusterView, remote: ClusterView) -> ClusterView:
         routing = remote.routing
 
     return ClusterView(members=members, routing=routing)
+
+
+_TYPE_BY_CLASS = {
+    Ping: "ping",
+    Ack: "ack",
+    PingReq: "pingreq",
+    Suspect: "suspect",
+    Alive: "alive",
+    Dead: "dead",
+}
+_CLASS_BY_TYPE = {v: k for k, v in _TYPE_BY_CLASS.items()}
+
+
+def encode_gossip(msg: GossipMsg) -> dict:
+    """Serialize a gossip message to a JSON-ready dict with a ``type`` discriminator.
+
+    The discriminator is required because ``Suspect`` and ``Dead`` share the same fields.
+    """
+    return {"type": _TYPE_BY_CLASS[type(msg)], **msg.model_dump(mode="json")}
+
+
+def decode_gossip(data: dict) -> GossipMsg:
+    """Deserialize a gossip message from a dict produced by ``encode_gossip``."""
+    cls = _CLASS_BY_TYPE[data["type"]]
+    return cls(**{k: v for k, v in data.items() if k != "type"})

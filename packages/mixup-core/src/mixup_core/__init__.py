@@ -37,6 +37,8 @@ from .gossip import (
     PingReq,
     Suspect,
     apply_gossip,
+    decode_gossip,
+    encode_gossip,
     merge_views,
 )
 from .gossip_engine import GossipEngine
@@ -132,6 +134,8 @@ __all__ = [
     "apply_gossip",
     "merge_views",
     "GossipEngine",
+    "decode_gossip",
+    "encode_gossip",
     # kv ledger
     "LedgerHeader",
     "decode_header",

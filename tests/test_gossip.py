@@ -1,6 +1,16 @@
 """Tests for the SWIM membership state machine (apply_gossip)."""
 
-from mixup_core.gossip import Ack, Alive, Dead, Ping, PingReq, Suspect, apply_gossip
+from mixup_core.gossip import (
+    Ack,
+    Alive,
+    Dead,
+    Ping,
+    PingReq,
+    Suspect,
+    apply_gossip,
+    decode_gossip,
+    encode_gossip,
+)
 from mixup_core.runtime import ClusterView, MemberState
 from mixup_core.types import MemberStatus, NodeRole
 
@@ -76,3 +86,16 @@ def test_alive_revives_suspect_at_same_incarnation() -> None:
     view = _view(_member("a", status=MemberStatus.SUSPECT))
     out = apply_gossip(view, Alive(node_id="a", incarnation=1, epoch=0))
     assert out.members["a"].status is MemberStatus.ALIVE
+
+
+def test_gossip_wire_roundtrip_all_types() -> None:
+    messages = [
+        Ping(node_id="a", incarnation=1, epoch=0, kv_seq=3),
+        Ack(node_id="a", incarnation=1, epoch=0, kv_seq=3, routing_epoch=2),
+        PingReq(from_node="b", target="c", incarnation=1),
+        Suspect(node_id="a", incarnation=1, by_node="b"),
+        Alive(node_id="a", incarnation=2, epoch=1),
+        Dead(node_id="a", incarnation=1, by_node="b"),
+    ]
+    for msg in messages:
+        assert decode_gossip(encode_gossip(msg)) == msg
