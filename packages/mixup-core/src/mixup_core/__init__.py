@@ -61,6 +61,7 @@ from .scheduler import (
 from .startup_config import load_startup_config
 from .topology import (
     build_lut,
+    cluster_view_from_config,
     expert_containers,
     experts_for,
     routing_table_from_config,
@@ -112,6 +113,7 @@ __all__ = [
     "NETWORK_NAME",
     "address",
     "build_lut",
+    "cluster_view_from_config",
     "dump_node_env",
     "expert_containers",
     "experts_for",

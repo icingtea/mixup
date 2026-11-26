@@ -18,6 +18,7 @@ from transformers.models.granitemoe.modeling_granitemoe import (
     GraniteMoeExperts,
 )
 
+from mixup_core.runtime import RoutingTable
 from mixup_core.topology import experts_for
 from mixup_core.types import ExpertRoute
 
@@ -87,39 +88,55 @@ def empty_experts(model_config: GraniteMoeConfig, num_experts: int) -> GraniteMo
 
 
 class ExpertGroup:
-    """One expert container: holds only its own experts, for every layer."""
+    """One expert container: holds only its own experts, for every layer.
+
+    ``set_routing`` swaps in a new assignment (used on failover): it reloads the experts
+    only if this node's set changed, so surviving nodes that keep their experts do no
+    work. Loading is per-expert (a union of runs), so a node can own a non-contiguous set
+    after a rebalance.
+    """
 
     def __init__(
         self,
         name: str,
         model_config: GraniteMoeConfig,
         model_file: Path,
-        lut: dict[int, ExpertRoute],
+        table: RoutingTable,
     ) -> None:
         self.name = name
         self.model_config = model_config
-        self.lut = lut
+        self.model_file = model_file
         self.num_layers = model_config.num_hidden_layers
         self.num_experts = model_config.num_local_experts or 0
-        self.experts = experts_for(lut, name)
+        self._lut: dict[int, ExpertRoute] = {}
+        self.experts: list[int] = []
+        self.layers: list[GraniteMoeExperts] = []
+        self.set_routing(table)
 
-        with safe_open(model_file, framework="pt") as f:
-            self.layers: list[GraniteMoeExperts] = [
-                self._load_layer(f, layer) for layer in range(self.num_layers)
-            ]
+    def set_routing(self, table: RoutingTable) -> None:
+        """Adopt ``table``; reload experts only if this node's set changed."""
+        lut = {e: (r.node_id, r.slot) for e, r in table.assignment.items()}
+        experts = experts_for(lut, self.name)
+        if experts == self.experts:
+            return
+        self._lut = lut
+        self.experts = experts
+        self.layers = self._load_all() if experts else []
+
+    def _load_all(self) -> list[GraniteMoeExperts]:
+        with safe_open(self.model_file, framework="pt") as f:
+            return [self._load_layer(f, layer) for layer in range(self.num_layers)]
 
     def _load_layer(self, file: safe_open, layer: int) -> GraniteMoeExperts:
-        """Read this container's experts for one layer out of the big file."""
+        """Read this node's experts for one layer out of the big file (any set, sorted)."""
         prefix = f"model.layers.{layer}.block_sparse_moe"
         all_gate_up = file.get_slice(f"{prefix}.input_linear.weight")
         all_down = file.get_slice(f"{prefix}.output_linear.weight")
 
-        mine = slice(self.experts[0], self.experts[-1] + 1)
+        gate_up = torch.cat([all_gate_up[e : e + 1] for e in self.experts], dim=0)
+        down = torch.cat([all_down[e : e + 1] for e in self.experts], dim=0)
         experts = empty_experts(self.model_config, len(self.experts))
-        experts.load_state_dict(
-            {"gate_up_proj": all_gate_up[mine], "down_proj": all_down[mine]},
-            assign=True,
-        )
+        experts.load_state_dict({"gate_up_proj": gate_up, "down_proj": down}, assign=True)
         return experts.eval()
 
     @torch.no_grad()
@@ -130,13 +147,15 @@ class ExpertGroup:
         top_k_index: Tensor,
         top_k_weights: Tensor,
     ) -> Tensor:
-        """Run this container's share of one layer's experts, zeroing experts it doesn't hold."""
+        """Run this node's share of one layer's experts, zeroing experts it doesn't hold."""
+        if not self.experts:
+            return torch.zeros_like(hidden_states)
         device = top_k_index.device
         mine = torch.tensor(
-            [self.lut[e][0] == self.name for e in range(self.num_experts)], device=device
+            [self._lut[e][0] == self.name for e in range(self.num_experts)], device=device
         )[top_k_index]
         slot = torch.tensor(
-            [self.lut[e][1] for e in range(self.num_experts)], device=device
+            [self._lut[e][1] for e in range(self.num_experts)], device=device
         )[top_k_index]
         slots = torch.where(mine, slot, SKIP)
         weights = top_k_weights.masked_fill(~mine, 0)

@@ -71,6 +71,18 @@ def test_routing_table_from_config() -> None:
     assert table.assignment[7] == RoutingEntry(node_id="container_3", slot=3)
 
 
+def test_cluster_view_from_config() -> None:
+    from mixup_core.topology import cluster_view_from_config
+    from mixup_core.types import NodeRole
+
+    view = cluster_view_from_config(_config())
+    assert set(view.members) == {"container_1", "container_2", "container_3"}
+    assert view.members["container_1"].role is NodeRole.LEADER
+    assert view.members["container_2"].role is NodeRole.EXPERT
+    assert view.members["container_2"].owned_experts == [0, 1, 2, 3]
+    assert view.routing is not None and view.routing.epoch == 0
+
+
 def test_validate_partition_ok() -> None:
     validate_partition(_config(), num_experts=8)
 

@@ -5,7 +5,7 @@ recomputed with a ``//``/``%`` heuristic, so the routing table can never disagre
 with the config.
 """
 
-from .runtime import RoutingEntry, RoutingTable
+from .runtime import ClusterView, MemberState, RoutingEntry, RoutingTable
 from .types import ExpertId, ExpertRoute, StartupConfig
 
 
@@ -59,3 +59,24 @@ def routing_table_from_config(config: StartupConfig) -> RoutingTable:
         for expert, (node, slot) in lut.items()
     }
     return RoutingTable(epoch=0, assignment=assignment)
+
+
+def cluster_view_from_config(config: StartupConfig) -> ClusterView:
+    """Build the initial live view (members + routing) from the startup layout.
+
+    Priorities are derived from roster order (earlier = higher), so the initial leader
+    is the highest-priority member.
+    """
+    n = len(config.nodes)
+    members = {
+        name: MemberState(
+            node_id=name,
+            role=config.initial_role(name),
+            epoch=0,
+            incarnation=1,
+            priority=n - index,
+            owned_experts=list(config.experts.get(name, [])),
+        )
+        for index, name in enumerate(config.nodes)
+    }
+    return ClusterView(members=members, routing=routing_table_from_config(config))
