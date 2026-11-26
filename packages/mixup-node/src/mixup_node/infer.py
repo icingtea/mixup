@@ -8,6 +8,7 @@ generation (leader) or the leader watchdog (follower).
 
 import logging
 import threading
+import time
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -61,20 +62,29 @@ def build_app(node: Node) -> FastAPI:
     def generate(request: GenerateRequest) -> dict:
         if node.model is None:
             raise HTTPException(status_code=503, detail="not the leader")
-        text, tokens, elapsed = node.generate(request.prompt, request.max_new_tokens)
+        text, tokens, elapsed, dense, dispatch = node.generate(
+            request.prompt, request.max_new_tokens
+        )
         return GenerateResponse(
-            text=text, tokens=tokens, elapsed_seconds=elapsed
+            text=text,
+            tokens=tokens,
+            elapsed_seconds=elapsed,
+            dense_seconds=dense,
+            dispatch_seconds=dispatch,
         ).model_dump()
 
     @app.post("/{layer}")
     async def run(layer: int, request: Request) -> Response:
         if node.expert_group is None:
             return Response(status_code=404)
+        server_start = time.perf_counter()
         req = ExpertRequest.from_bytes(await request.body())
         out = node.expert_group.forward(
             layer, req.hidden_states, req.top_k_index, req.top_k_weights
         )
-        return Response(ExpertResponse(out=out).to_bytes())
+        body = ExpertResponse(out=out).to_bytes()
+        server_seconds = time.perf_counter() - server_start
+        return Response(body, headers={"X-Server-Seconds": f"{server_seconds:.6f}"})
 
     return app
 

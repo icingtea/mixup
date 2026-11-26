@@ -29,6 +29,7 @@ from mixup_core.scheduler import LeastLoadedPolicy, handle_node_failure, rebalan
 from mixup_core.types import MemberStatus, NodeRole
 
 from .dispatch import Dispatcher
+from .metrics import MetricsCollector
 from .model import ExpertGroup, load_central
 
 logger = logging.getLogger(__name__)
@@ -92,11 +93,47 @@ class Node:
         A leader only loads the dense model and then serves ``POST /generate`` — it does
         not generate on its own. Generation starts only when a request is dispatched.
         """
+        self._discover_topology()
         if self.role is NodeRole.LEADER:
             self._become_leader()
         else:
             self._load_experts()
             self._watchdog()
+
+    def _discover_topology(self) -> None:
+        """Check whether another node is already leader; adopt it (demoting self if needed).
+
+        Called at boot so a restarted node doesn't blindly assume its startup role after
+        the cluster has moved on (e.g. a resurrected old leader must rejoin as a follower
+        of the newly-elected leader instead of re-declaring itself leader).
+        """
+        best_epoch = 0
+        best_leader: str | None = None
+        for name in self.view.members:
+            if name == self.name:
+                continue
+            try:
+                projection = requests.get(f"{address(name)}/leader", timeout=2).json()
+            except (RequestException, ValueError):
+                continue
+            leader = projection.get("leader")
+            epoch = projection.get("epoch", 0)
+            if leader is not None and leader != self.name and epoch > best_epoch:
+                best_epoch = epoch
+                best_leader = leader
+
+        if best_leader is not None:
+            logger.info(
+                "%s: existing leader %s (epoch %d); joining as follower",
+                self.name,
+                best_leader,
+                best_epoch,
+            )
+            with self._lock:
+                self.view = apply_leader_announcement(self.view, best_leader, best_epoch)
+                me = self.view.members.get(self.name)
+                if me is not None:
+                    self.role = me.role
 
     # -- role transitions --------------------------------------------------
 
@@ -143,6 +180,9 @@ class Node:
         """Adopt an announced leader (from another node's POST /leader)."""
         with self._lock:
             self.view = apply_leader_announcement(self.view, node_id, epoch)
+            me = self.view.members.get(self.name)
+            if me is not None:
+                self.role = me.role
 
     def _announce_leader(self) -> None:
         """Tell every other node we are the leader, so they poll us (and can fail over again)."""
@@ -160,15 +200,21 @@ class Node:
 
     # -- generation --------------------------------------------------------
 
-    def generate(self, prompt: str, max_new_tokens: int) -> tuple[str, int, float]:
-        """Run a generation on demand (``POST /generate``); return (text, tokens, seconds)."""
+    def generate(
+        self, prompt: str, max_new_tokens: int
+    ) -> tuple[str, int, float, float, float]:
+        """Run a generation on demand (``POST /generate``).
+
+        Returns ``(text, tokens, elapsed_seconds, dense_seconds, dispatch_seconds)``.
+        """
         return self._generate(prompt, max_new_tokens)
 
     def _generate(
         self, prompt: str, max_new_tokens: int, resume: bool = False
-    ) -> tuple[str, int, float]:
+    ) -> tuple[str, int, float, float, float]:
         assert self.model is not None and self.tokenizer is not None
         assert self.dispatcher is not None
+        logger.info("request: prompt=%r max_new_tokens=%d", prompt, max_new_tokens)
         self.dispatcher.wait_for_experts()
 
         if resume and CHECKPOINT_FILE.exists():
@@ -190,27 +236,40 @@ class Node:
 
         if remaining <= 0:
             logger.info("generation already complete")
-            return "", 0, 0.0
+            return "", 0, 0.0, 0.0, 0.0
+
+        metrics = MetricsCollector(self.name, prompt, target)
+        self.dispatcher.metrics = metrics
 
         CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
         processor = _CheckpointProcessor(prompt_len, target, CHECKPOINT_FILE)
-        start = time.monotonic()
+        start = time.perf_counter()
         with torch.no_grad():
             out = self.model.generate(
                 ids, max_new_tokens=remaining, do_sample=False, logits_processor=[processor]
             )
-        elapsed = time.monotonic() - start
+        elapsed = time.perf_counter() - start
         generated = out.shape[1] - ids.shape[1]
         throughput = generated / elapsed if elapsed > 0 else 0.0
+        dense = max(0.0, elapsed - metrics.dispatch_seconds)
+        dispatch = metrics.dispatch_seconds
+
+        metrics.record_generation(tokens=generated, total=elapsed, tok_per_sec=throughput)
+        metrics.close()
+        self.dispatcher.metrics = None
+
         logger.info(
-            "benchmark: generated_tokens=%d generation_seconds=%.3f tokens_per_second=%.2f",
+            "benchmark: generated_tokens=%d generation_seconds=%.3f dense_seconds=%.3f "
+            "dispatch_seconds=%.3f tokens_per_second=%.2f",
             generated,
             elapsed,
+            dense,
+            dispatch,
             throughput,
         )
         text = self.tokenizer.decode(out[0][prompt_len:])
         logger.info("generated: %s", text)
-        return text, generated, elapsed
+        return text, generated, elapsed, dense, dispatch
 
     # -- watchdog ----------------------------------------------------------
 

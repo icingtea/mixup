@@ -3,6 +3,9 @@
 Resilient: on a connection failure to an expert, it invokes ``on_failure`` — which the
 central uses to rebalance and broadcast the new routing table — then retries against the
 new owner (Phase 6/7 failover).
+
+Every request is timed and logged; if a ``MetricsCollector`` is attached, each expert
+round-trip and layer dispatch is also persisted.
 """
 
 import logging
@@ -18,6 +21,7 @@ from torch import Tensor
 from mixup_core.constants import address
 from mixup_core.runtime import RoutingTable
 
+from .metrics import MetricsCollector
 from .serialization import ExpertRequest, ExpertResponse
 
 logger = logging.getLogger(__name__)
@@ -50,6 +54,8 @@ class Dispatcher:
         # A shared Session reuses TCP connections across requests (keep-alive), so the
         # ~24× per-token dispatches don't each pay a fresh TCP handshake.
         self._session = requests.Session()
+        self.metrics: MetricsCollector | None = None
+        self._token = 0  # increments each time layer 0 is dispatched (a new token)
 
     def __call__(
         self,
@@ -58,6 +64,8 @@ class Dispatcher:
         top_k_index: Tensor,
         top_k_weights: Tensor,
     ) -> Tensor:
+        if layer == 0:
+            self._token += 1
         for _ in range(self.max_retries + 1):
             chosen = self._chosen(top_k_index)
             try:
@@ -79,6 +87,7 @@ class Dispatcher:
         top_k_weights: Tensor,
         chosen: set[str],
     ) -> Tensor:
+        t0 = time.perf_counter()
         jobs = [
             self._pool.submit(
                 self._send, container, layer, hidden_states, top_k_index, top_k_weights
@@ -87,9 +96,30 @@ class Dispatcher:
         ]
         # Expert replies are deserialized on CPU (the wire is CPU); accumulate there and
         # move the sum back onto the model's device at the end.
+        reduce_start = time.perf_counter()
         total = torch.zeros_like(hidden_states, device="cpu")
         for job in jobs:
             total += job.result()
+        reduce_time = time.perf_counter() - reduce_start
+        dispatch_time = time.perf_counter() - t0
+
+        experts = sorted(chosen)
+        logger.info(
+            "token %d layer %d: experts=%s dispatch=%.2fms reduce=%.2fms",
+            self._token,
+            layer,
+            experts,
+            dispatch_time * 1000,
+            reduce_time * 1000,
+        )
+        if self.metrics is not None:
+            self.metrics.record_layer(
+                token=self._token,
+                layer=layer,
+                experts=experts,
+                dispatch=dispatch_time,
+                reduce_=reduce_time,
+            )
         return total.to(hidden_states.device)
 
     def _send(
@@ -100,19 +130,53 @@ class Dispatcher:
         top_k_index: Tensor,
         top_k_weights: Tensor,
     ) -> Tensor:
+        serialize_start = time.perf_counter()
         body = ExpertRequest(
             hidden_states=hidden_states,
             top_k_index=top_k_index,
             top_k_weights=top_k_weights,
         ).to_bytes()
+        serialize_time = time.perf_counter() - serialize_start
+
         try:
+            http_start = time.perf_counter()
             response = self._session.post(
                 f"{address(container)}/{layer}", data=body, timeout=30
             )
+            http_time = time.perf_counter() - http_start
             response.raise_for_status()
         except RequestException as exc:
             raise _NodeFailure(container) from exc
-        return ExpertResponse.from_bytes(response.content).out
+
+        server_time = float(response.headers.get("X-Server-Seconds", 0.0))
+
+        deserialize_start = time.perf_counter()
+        out = ExpertResponse.from_bytes(response.content).out
+        deserialize_time = time.perf_counter() - deserialize_start
+
+        logger.debug(
+            "token %d layer %d -> %s: rt=%.2fms "
+            "(serialize=%.2f http=%.2f server=%.2f deserialize=%.2f)",
+            self._token,
+            layer,
+            container,
+            (serialize_time + http_time + deserialize_time) * 1000,
+            serialize_time * 1000,
+            http_time * 1000,
+            server_time * 1000,
+            deserialize_time * 1000,
+        )
+        if self.metrics is not None:
+            self.metrics.record_expert(
+                token=self._token,
+                layer=layer,
+                expert=container,
+                serialize=serialize_time,
+                http=http_time,
+                server=server_time,
+                deserialize=deserialize_time,
+            )
+        return out
 
     def wait_for_experts(self) -> None:
         """Block until every expert node reports it is ready (loaded its experts)."""

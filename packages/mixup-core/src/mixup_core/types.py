@@ -104,8 +104,14 @@ class GenerateRequest(BaseModel):
 
 
 class GenerateResponse(BaseModel):
-    """The leader's reply to a generation request, with benchmark metrics."""
+    """The leader's reply to a generation request, with benchmark metrics.
+
+    ``dense_seconds`` is the leader's own (non-distributed) compute; ``dispatch_seconds``
+    is the distributed expert dispatch + reduce time.
+    """
 
     text: str
     tokens: int
     elapsed_seconds: float
+    dense_seconds: float
+    dispatch_seconds: float

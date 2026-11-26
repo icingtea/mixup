@@ -11,7 +11,11 @@ def test_log_format_is_timestamped() -> None:
 
 
 def test_generate_response_carries_benchmark() -> None:
-    resp = GenerateResponse(text="hello", tokens=3, elapsed_seconds=0.5)
+    resp = GenerateResponse(
+        text="hello", tokens=3, elapsed_seconds=0.5, dense_seconds=0.2, dispatch_seconds=0.3
+    )
     assert resp.text == "hello"
     assert resp.tokens == 3
     assert resp.elapsed_seconds == 0.5
+    assert resp.dense_seconds == 0.2
+    assert resp.dispatch_seconds == 0.3

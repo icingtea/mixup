@@ -5,14 +5,32 @@ RUN pip install --no-cache-dir uv
 
 WORKDIR /usr/local/app
 
+# ---------------------------------------------------------------------------
+# Dependency layer.
+# Copy ONLY the metadata needed to install third-party dependencies — no source
+# code. This is the expensive layer (torch + the nvidia/CUDA toolchain land
+# here), and it is invalidated only when uv.lock or a manifest changes, never by
+# a code edit. The uv cache mount persists the downloaded wheels, so even a
+# real dependency change re-runs this layer without re-downloading.
+# ---------------------------------------------------------------------------
 COPY pyproject.toml uv.lock ./
+COPY packages/mixup-core/pyproject.toml packages/mixup-core/pyproject.toml
+COPY packages/mixup-node/pyproject.toml packages/mixup-node/pyproject.toml
+COPY packages/mixup-orchestrator/pyproject.toml packages/mixup-orchestrator/pyproject.toml
+COPY packages/mixup-repl/pyproject.toml packages/mixup-repl/pyproject.toml
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package mixup-node \
+        --no-install-workspace --no-install-project
+
+# ---------------------------------------------------------------------------
+# Application layer.
+# Copy the (tiny) workspace source and install just those packages. The
+# third-party environment above is already cached, so this is fast on every
+# code change — no torch reinstall.
+# ---------------------------------------------------------------------------
 COPY packages ./packages
 
-# Install mixup-node and its workspace dependency mixup-core, frozen to uv.lock,
-# skipping the dev group (ruff/pytest) and the orchestrator (docker). torch resolves
-# to the CUDA wheel (see ADR-007); the orchestrator passes the GPU through at run time.
-# The uv cache mount persists downloaded wheels across builds, so code-only
-# changes re-run `uv sync` without re-downloading torch.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package mixup-node
 

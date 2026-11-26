@@ -83,13 +83,22 @@ class LocalModel:
         return self.tokenizer.decode(out[0][prompt_len:]), tokens, elapsed
 
 
-def _report(text: str, tokens: int, elapsed: float) -> None:
+def _report(
+    text: str,
+    tokens: int,
+    elapsed: float,
+    dense: float | None = None,
+    dispatch: float | None = None,
+) -> None:
     print(text)
-    if elapsed > 0:
-        print(
-            f"[{tokens} tokens in {elapsed:.3f}s ({tokens / elapsed:.2f} tok/s)]",
-            file=sys.stderr,
-        )
+    if elapsed <= 0:
+        return
+    tok_s = tokens / elapsed
+    line = f"[{tokens} tokens in {elapsed:.3f}s ({tok_s:.2f} tok/s)"
+    if dense is not None and dispatch is not None:
+        line += f" | dense {dense:.3f}s dispatch {dispatch:.3f}s"
+    line += "]"
+    print(line, file=sys.stderr)
 
 
 def run_local(prompt: str | None, max_new_tokens: int, model_dir: Path) -> int:
@@ -136,24 +145,39 @@ def main(argv: list[str] | None = None) -> int:
     config = load_startup_config(args.config)
     urls = node_urls(config)
 
-    leader_id = discover_leader(urls, args.timeout)
-    if leader_id is None:
-        print("no leader found (is the cluster running?)", file=sys.stderr)
-        return 1
-    leader_url = urls[leader_id]
-
     request = GenerateRequest(prompt=args.prompt, max_new_tokens=args.max_new_tokens)
-    try:
-        response = httpx.post(
-            f"{leader_url}/generate", json=request.model_dump(), timeout=None
-        )
-        response.raise_for_status()
-        result = GenerateResponse(**response.json())
-    except httpx.HTTPError as exc:
-        print(f"error talking to {leader_url}: {exc}", file=sys.stderr)
+    result = None
+    for _ in range(3):
+        leader_id = discover_leader(urls, args.timeout)
+        if leader_id is None:
+            print("no leader found (is the cluster running?)", file=sys.stderr)
+            return 1
+        leader_url = urls[leader_id]
+        try:
+            response = httpx.post(
+                f"{leader_url}/generate", json=request.model_dump(), timeout=None
+            )
+            response.raise_for_status()
+            result = GenerateResponse(**response.json())
+            break
+        except httpx.HTTPError as exc:
+            print(
+                f"leader {leader_id} failed ({exc}); waiting for failover...",
+                file=sys.stderr,
+            )
+            time.sleep(2)
+
+    if result is None:
+        print("could not reach a leader after retries", file=sys.stderr)
         return 1
 
-    _report(result.text, result.tokens, result.elapsed_seconds)
+    _report(
+        result.text,
+        result.tokens,
+        result.elapsed_seconds,
+        result.dense_seconds,
+        result.dispatch_seconds,
+    )
     return 0
 
 
