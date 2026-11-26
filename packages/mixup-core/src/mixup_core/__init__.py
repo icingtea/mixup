@@ -59,6 +59,7 @@ from .kvledger import (
     encode_checkpoint,
     encode_header,
 )
+from .logging_config import LOG_FORMAT, configure_logging
 from .runtime import (
     ClusterView,
     LeaderProjection,
@@ -186,4 +187,7 @@ __all__ = [
     "Checkpoint",
     "decode_checkpoint",
     "encode_checkpoint",
+    # logging
+    "LOG_FORMAT",
+    "configure_logging",
 ]

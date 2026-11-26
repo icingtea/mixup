@@ -16,6 +16,7 @@ from transformers import GraniteMoeConfig
 from mixup_core.constants import INTERNAL_PORT, MODEL_DIR
 from mixup_core.election import leader_projection
 from mixup_core.env import load_node_env
+from mixup_core.logging_config import configure_logging
 from mixup_core.runtime import RoutingTable
 from mixup_core.topology import cluster_view_from_config, validate_partition
 from mixup_core.types import GenerateRequest, GenerateResponse
@@ -60,8 +61,10 @@ def build_app(node: Node) -> FastAPI:
     def generate(request: GenerateRequest) -> dict:
         if node.model is None:
             raise HTTPException(status_code=503, detail="not the leader")
-        text = node.generate(request.prompt, request.max_new_tokens)
-        return GenerateResponse(text=text).model_dump()
+        text, tokens, elapsed = node.generate(request.prompt, request.max_new_tokens)
+        return GenerateResponse(
+            text=text, tokens=tokens, elapsed_seconds=elapsed
+        ).model_dump()
 
     @app.post("/{layer}")
     async def run(layer: int, request: Request) -> Response:
@@ -78,7 +81,7 @@ def build_app(node: Node) -> FastAPI:
 
 def start() -> None:
     """Deserialize MIXUP_NODE_ENV and start the server + control loop."""
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    configure_logging()
     env = load_node_env()
     model_config = _model_config()
     validate_partition(env.config, model_config.num_local_experts or 0)

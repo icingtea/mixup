@@ -74,10 +74,19 @@ def main(argv: list[str] | None = None) -> int:
             f"{leader_url}/generate", json=request.model_dump(), timeout=None
         )
         response.raise_for_status()
-        print(GenerateResponse(**response.json()).text)
+        result = GenerateResponse(**response.json())
     except httpx.HTTPError as exc:
         print(f"error talking to {leader_url}: {exc}", file=sys.stderr)
         return 1
+
+    print(result.text)
+    if result.elapsed_seconds > 0:
+        tok_s = result.tokens / result.elapsed_seconds
+        print(
+            f"[{result.tokens} tokens in {result.elapsed_seconds:.3f}s "
+            f"({tok_s:.2f} tok/s)]",
+            file=sys.stderr,
+        )
     return 0
 
 

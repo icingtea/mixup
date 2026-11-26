@@ -32,6 +32,7 @@ from mixup_core.env import (
     NodeEnv,
     dump_node_env,
 )
+from mixup_core.logging_config import configure_logging
 from mixup_core.startup_config import load_startup_config
 from mixup_core.types import StartupConfig
 
@@ -133,7 +134,7 @@ def start_container(
 
 def main(argv: list[str] | None = None) -> int:
     """Build the image and start every container in the config."""
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    configure_logging()
     parser = argparse.ArgumentParser(description="Build the image and start the cluster.")
     parser.add_argument(
         "config", nargs="?", default=str(DEFAULT_CONFIG_PATH), help="path to config.json"

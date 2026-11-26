@@ -157,11 +157,13 @@ class Node:
 
     # -- generation --------------------------------------------------------
 
-    def generate(self, prompt: str, max_new_tokens: int) -> str:
-        """Run a generation on demand (used by ``POST /generate``); return the text."""
+    def generate(self, prompt: str, max_new_tokens: int) -> tuple[str, int, float]:
+        """Run a generation on demand (``POST /generate``); return (text, tokens, seconds)."""
         return self._generate(prompt, max_new_tokens)
 
-    def _generate(self, prompt: str, max_new_tokens: int, resume: bool = False) -> str:
+    def _generate(
+        self, prompt: str, max_new_tokens: int, resume: bool = False
+    ) -> tuple[str, int, float]:
         assert self.model is not None and self.tokenizer is not None
         assert self.dispatcher is not None
         self.dispatcher.wait_for_experts()
@@ -185,17 +187,27 @@ class Node:
 
         if remaining <= 0:
             logger.info("generation already complete")
-            return ""
+            return "", 0, 0.0
 
         CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
         processor = _CheckpointProcessor(prompt_len, target, CHECKPOINT_FILE)
+        start = time.monotonic()
         with torch.no_grad():
             out = self.model.generate(
                 ids, max_new_tokens=remaining, do_sample=False, logits_processor=[processor]
             )
+        elapsed = time.monotonic() - start
+        generated = out.shape[1] - ids.shape[1]
+        throughput = generated / elapsed if elapsed > 0 else 0.0
+        logger.info(
+            "benchmark: generated_tokens=%d generation_seconds=%.3f tokens_per_second=%.2f",
+            generated,
+            elapsed,
+            throughput,
+        )
         text = self.tokenizer.decode(out[0][prompt_len:])
         logger.info("generated: %s", text)
-        return text
+        return text, generated, elapsed
 
     # -- watchdog ----------------------------------------------------------
 

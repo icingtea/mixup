@@ -104,6 +104,8 @@ class GenerateRequest(BaseModel):
 
 
 class GenerateResponse(BaseModel):
-    """The leader's reply to a generation request."""
+    """The leader's reply to a generation request, with benchmark metrics."""
 
     text: str
+    tokens: int
+    elapsed_seconds: float
