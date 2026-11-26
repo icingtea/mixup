@@ -92,10 +92,14 @@ class Dispatcher:
                 self._drop_connection(container)
 
     def _connection(self, container: str) -> TCPConnection:
-        """Return (lazily creating) the persistent data-plane connection to ``container``."""
+        """Return (lazily creating) the persistent data-plane connection to ``container``.
+
+        A short socket timeout bounds how long a dead/unreachable node can stall a
+        dispatch before the connection fails and failover kicks in.
+        """
         conn = self._connections.get(container)
         if conn is None:
-            conn = TCPConnection(container, EXPERT_PORT)
+            conn = TCPConnection(container, EXPERT_PORT, timeout=10.0)
             self._connections[container] = conn
         return conn
 
@@ -205,18 +209,32 @@ class Dispatcher:
             )
         return out
 
-    def wait_for_experts(self) -> None:
-        """Block until every expert node reports it is ready (loaded its experts)."""
+    def wait_for_experts(self, timeout: float = 30.0) -> None:
+        """Wait for each expert to report ready, giving up after ``timeout`` per node.
+
+        A dead node is skipped here: the dispatch fails over to the rebalanced set on
+        first contact. A rejoining node gets up to ``timeout`` to finish loading.
+        """
         for container in sorted(self.expert_nodes):
-            while True:
+            deadline = time.monotonic() + timeout
+            ready = False
+            while time.monotonic() < deadline:
                 try:
                     response = self._session.get(f"{address(container)}/health", timeout=2)
                     if response.json().get("ready"):
+                        ready = True
                         break
                 except (RequestException, ValueError):
                     pass
                 time.sleep(1)
-            logger.info("%s is up", container)
+            if ready:
+                logger.info("%s is up", container)
+            else:
+                logger.warning(
+                    "expert %s not ready after %.0fs; will fail over on dispatch",
+                    container,
+                    timeout,
+                )
 
     def close(self) -> None:
         """Release the worker pool, control session, and data-plane connections."""
