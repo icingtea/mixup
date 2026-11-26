@@ -221,12 +221,12 @@ class Node:
                 ),
             )
             if self.view.routing is not None:
-                self.view = ClusterView(
-                    members=self.view.members,
-                    routing=balance_experts(
-                        self.view, self.view.routing, LeastLoadedPolicy()
-                    ),
+                new_table = balance_experts(
+                    self.view, self.view.routing, LeastLoadedPolicy()
                 )
+                self.view = ClusterView(members=self.view.members, routing=new_table)
+                if self.dispatcher is not None:
+                    self.dispatcher.set_table(new_table)
         broadcast_routing(self.view, self.name)
         logger.info("%s: rebalanced after %s rejoined", self.name, node_id)
 

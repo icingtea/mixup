@@ -72,12 +72,16 @@ class Dispatcher:
                 return self._run(layer, hidden_states, top_k_index, top_k_weights, chosen)
             except _NodeFailure as failure:
                 logger.warning("%s is down; failing over its experts", failure.node)
-                self.table = self.on_failure(failure.node)
-                self.expert_nodes = {e.node_id for e in self.table.assignment.values()}
+                self.set_table(self.on_failure(failure.node))
         raise RuntimeError("expert dispatch failed after retries")
 
     def _chosen(self, top_k_index: Tensor) -> set[str]:
         return {self.table.assignment[e].node_id for e in top_k_index.flatten().tolist()}
+
+    def set_table(self, table: RoutingTable) -> None:
+        """Adopt a new routing table (on failover or rejoin), refreshing the expert set."""
+        self.table = table
+        self.expert_nodes = {entry.node_id for entry in table.assignment.values()}
 
     def _run(
         self,

@@ -17,3 +17,6 @@ var/
 # Tool generated files
 .pytest_cache/
 .ruff_cache/
+
+# Temp
+.temp/
