@@ -159,8 +159,13 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("download it first with: mixup-fetch-model")
         return 1
 
+    # Use CDI (nvidia.com/gpu=all) rather than --gpus all: --gpus does vendor
+    # auto-detection, which breaks on hosts with a mixed AMD iGPU + NVIDIA dGPU
+    # ("AMD CDI spec not found"). CDI names the NVIDIA device explicitly.
     device_requests = (
-        None if args.no_gpu else [DeviceRequest(count=-1, capabilities=[["gpu"]])]
+        None
+        if args.no_gpu
+        else [DeviceRequest(driver="cdi", device_ids=["nvidia.com/gpu=all"])]
     )
 
     client = docker.from_env()
