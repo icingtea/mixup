@@ -7,14 +7,16 @@ generation (leader) or the leader watchdog (follower).
 """
 
 import logging
+import struct
 import threading
 import time
+from collections.abc import Callable
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request
 from transformers import GraniteMoeConfig
 
-from mixup_core.constants import INTERNAL_PORT, MODEL_DIR
+from mixup_core.constants import EXPERT_PORT, INTERNAL_PORT, MODEL_DIR
 from mixup_core.election import leader_projection
 from mixup_core.env import load_node_env
 from mixup_core.logging_config import configure_logging
@@ -24,6 +26,7 @@ from mixup_core.types import GenerateRequest, GenerateResponse
 
 from .node import Node
 from .serialization import ExpertRequest, ExpertResponse
+from .transport import TCPServer
 
 logger = logging.getLogger(__name__)
 
@@ -81,20 +84,25 @@ def build_app(node: Node) -> FastAPI:
             dispatch_seconds=dispatch,
         ).model_dump()
 
-    @app.post("/{layer}")
-    async def run(layer: int, request: Request) -> Response:
+    return app
+
+
+def _expert_callback(node: Node) -> Callable[[bytes], bytes]:
+    """Build the raw-TCP data-plane handler: ``[layer][body] -> [server_seconds][out]``."""
+
+    def handle(payload: bytes) -> bytes:
+        (layer,) = struct.unpack(">I", payload[:4])
         if node.expert_group is None:
-            return Response(status_code=404)
+            raise RuntimeError("not an expert node")
         server_start = time.perf_counter()
-        req = ExpertRequest.from_bytes(await request.body())
+        req = ExpertRequest.from_bytes(payload[4:])
         out = node.expert_group.forward(
             layer, req.hidden_states, req.top_k_index, req.top_k_weights
         )
         body = ExpertResponse(out=out).to_bytes()
-        server_seconds = time.perf_counter() - server_start
-        return Response(body, headers={"X-Server-Seconds": f"{server_seconds:.6f}"})
+        return struct.pack(">d", time.perf_counter() - server_start) + body
 
-    return app
+    return handle
 
 
 def start() -> None:
@@ -108,6 +116,10 @@ def start() -> None:
     node = Node(env, model_config, view)
     logger.info("%s boot: role=%s", env.container_name, node.role.value)
 
+    # Expert data plane: a raw-TCP server, bound synchronously so it is listening before
+    # the node reports ready. The control plane stays on FastAPI/HTTP.
+    tcp_server = TCPServer("0.0.0.0", EXPERT_PORT, _expert_callback(node))
+    threading.Thread(target=tcp_server.serve_forever, daemon=True).start()
     threading.Thread(target=node.run, daemon=True).start()
     uvicorn.run(build_app(node), host="0.0.0.0", port=INTERNAL_PORT, log_level="warning")
 

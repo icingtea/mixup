@@ -1,14 +1,16 @@
-"""Central-side HTTP client: fan expert work out to the containers and sum replies.
+"""Central-side dispatcher: fan expert work out to the containers and sum replies.
 
-Resilient: on a connection failure to an expert, it invokes ``on_failure`` — which the
-central uses to rebalance and broadcast the new routing table — then retries against the
-new owner (Phase 6/7 failover).
+The expert data path uses a persistent raw-TCP connection per node (see ``transport``);
+the control path (``/health``) stays on HTTP. On a connection failure the dispatcher
+invokes ``on_failure`` — which the central uses to rebalance and broadcast the new
+routing table — then retries against the new owner (Phase 6/7 failover).
 
 Every request is timed and logged; if a ``MetricsCollector`` is attached, each expert
 round-trip and layer dispatch is also persisted.
 """
 
 import logging
+import struct
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -18,11 +20,12 @@ import torch
 from requests.exceptions import RequestException
 from torch import Tensor
 
-from mixup_core.constants import address
+from mixup_core.constants import EXPERT_PORT, address
 from mixup_core.runtime import RoutingTable
 
 from .metrics import MetricsCollector
 from .serialization import ExpertRequest, ExpertResponse
+from .transport import TCPConnection
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +54,10 @@ class Dispatcher:
         self.max_retries = max_retries
         self.expert_nodes = {entry.node_id for entry in table.assignment.values()}
         self._pool = ThreadPoolExecutor(max_workers=max(1, len(self.expert_nodes)))
-        # A shared Session reuses TCP connections across requests (keep-alive), so the
-        # ~24× per-token dispatches don't each pay a fresh TCP handshake.
+        # A shared Session for the control path (/health polling), and one persistent
+        # raw-TCP connection per expert node for the data path.
         self._session = requests.Session()
+        self._connections: dict[str, TCPConnection] = {}
         self.metrics: MetricsCollector | None = None
         self._token = 0  # increments each time layer 0 is dispatched (a new token)
 
@@ -82,6 +86,23 @@ class Dispatcher:
         """Adopt a new routing table (on failover or rejoin), refreshing the expert set."""
         self.table = table
         self.expert_nodes = {entry.node_id for entry in table.assignment.values()}
+        # Drop connections to nodes that are no longer experts (rebalanced away).
+        for container in list(self._connections):
+            if container not in self.expert_nodes:
+                self._drop_connection(container)
+
+    def _connection(self, container: str) -> TCPConnection:
+        """Return (lazily creating) the persistent data-plane connection to ``container``."""
+        conn = self._connections.get(container)
+        if conn is None:
+            conn = TCPConnection(container, EXPERT_PORT)
+            self._connections[container] = conn
+        return conn
+
+    def _drop_connection(self, container: str) -> None:
+        conn = self._connections.pop(container, None)
+        if conn is not None:
+            conn.close()
 
     def _run(
         self,
@@ -146,18 +167,18 @@ class Dispatcher:
 
         try:
             http_start = time.perf_counter()
-            response = self._session.post(
-                f"{address(container)}/{layer}", data=body, timeout=30
-            )
+            # Request: [layer][body]; reply: [server_seconds][out], over one persistent
+            # connection per node (no HTTP framing per call).
+            reply = self._connection(container).request(struct.pack(">I", layer) + body)
             http_time = time.perf_counter() - http_start
-            response.raise_for_status()
-        except RequestException as exc:
+        except OSError as exc:
+            self._drop_connection(container)
             raise _NodeFailure(container) from exc
 
-        server_time = float(response.headers.get("X-Server-Seconds", 0.0))
+        (server_time,) = struct.unpack(">d", reply[:8])
 
         deserialize_start = time.perf_counter()
-        out = ExpertResponse.from_bytes(response.content).out
+        out = ExpertResponse.from_bytes(reply[8:]).out
         deserialize_time = time.perf_counter() - deserialize_start
 
         logger.debug(
@@ -198,6 +219,8 @@ class Dispatcher:
             logger.info("%s is up", container)
 
     def close(self) -> None:
-        """Release the worker pool and connection pool."""
+        """Release the worker pool, control session, and data-plane connections."""
         self._pool.shutdown(wait=False)
         self._session.close()
+        for container in list(self._connections):
+            self._drop_connection(container)

@@ -8,7 +8,8 @@ IMAGE_NAME = "mixup"
 IMAGE_TAG = "latest"
 
 # Ports
-INTERNAL_PORT = 8000        # every node listens here inside the cluster
+INTERNAL_PORT = 8000        # every node listens here inside the cluster (HTTP control plane)
+EXPERT_PORT = 8001          # raw-TCP expert data plane (internal-only; no host mapping)
 EXTERNAL_PORT_BASE = 9000   # central -> 9000 on the host, expert containers -> 9001, ...
 
 # Model location inside the container (the host's models/ dir is mounted read-only here)
