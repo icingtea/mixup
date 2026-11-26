@@ -109,6 +109,9 @@ def start_container(
         max_new_tokens=max_new_tokens,
     )
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
+    # The container runs as a non-root `app` user; make the ledger dir writable by any
+    # UID so the bind mount (owned by the host user) is usable for checkpoint writes.
+    LEDGER_DIR.chmod(0o777)
     client.containers.run(
         image=image,
         name=name,

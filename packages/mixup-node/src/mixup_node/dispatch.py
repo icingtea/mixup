@@ -47,6 +47,9 @@ class Dispatcher:
         self.max_retries = max_retries
         self.expert_nodes = {entry.node_id for entry in table.assignment.values()}
         self._pool = ThreadPoolExecutor(max_workers=max(1, len(self.expert_nodes)))
+        # A shared Session reuses TCP connections across requests (keep-alive), so the
+        # ~24× per-token dispatches don't each pay a fresh TCP handshake.
+        self._session = requests.Session()
 
     def __call__(
         self,
@@ -101,7 +104,9 @@ class Dispatcher:
             top_k_weights=top_k_weights,
         ).to_bytes()
         try:
-            response = requests.post(f"{address(container)}/{layer}", data=body, timeout=30)
+            response = self._session.post(
+                f"{address(container)}/{layer}", data=body, timeout=30
+            )
             response.raise_for_status()
         except RequestException as exc:
             raise _NodeFailure(container) from exc
@@ -112,7 +117,7 @@ class Dispatcher:
         for container in sorted(self.expert_nodes):
             while True:
                 try:
-                    response = requests.get(f"{address(container)}/health", timeout=2)
+                    response = self._session.get(f"{address(container)}/health", timeout=2)
                     if response.json().get("ready"):
                         break
                 except (RequestException, ValueError):
@@ -121,5 +126,6 @@ class Dispatcher:
             logger.info("%s is up", container)
 
     def close(self) -> None:
-        """Release the worker pool."""
+        """Release the worker pool and connection pool."""
         self._pool.shutdown(wait=False)
+        self._session.close()
