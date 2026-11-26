@@ -18,7 +18,7 @@ from .constants import (
     NETWORK_NAME,
     address,
 )
-from .election import elect
+from .election import elect, leader_projection
 from .env import (
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_PROMPT,
@@ -43,10 +43,12 @@ from .gossip_engine import GossipEngine
 from .kvledger import LedgerHeader, decode_header, encode_header
 from .runtime import (
     ClusterView,
+    LeaderProjection,
     LoadMetrics,
     MemberState,
     RoutingEntry,
     RoutingTable,
+    apply_routing,
 )
 from .scheduler import LeastLoadedPolicy, PlacementPolicy, rebalance_experts
 from .startup_config import load_startup_config
@@ -105,11 +107,14 @@ __all__ = [
     "validate_partition",
     # runtime state
     "ClusterView",
+    "LeaderProjection",
     "LoadMetrics",
     "MemberState",
     "RoutingEntry",
     "RoutingTable",
+    "apply_routing",
     "elect",
+    "leader_projection",
     "LeastLoadedPolicy",
     "PlacementPolicy",
     "rebalance_experts",

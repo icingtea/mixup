@@ -1,6 +1,14 @@
 """Tests for the live runtime state: membership, routing table, aggregate view."""
 
-from mixup_core.runtime import ClusterView, LoadMetrics, MemberState, RoutingEntry, RoutingTable
+from mixup_core.election import leader_projection
+from mixup_core.runtime import (
+    ClusterView,
+    LoadMetrics,
+    MemberState,
+    RoutingEntry,
+    RoutingTable,
+    apply_routing,
+)
 from mixup_core.types import NodeRole
 
 
@@ -57,3 +65,49 @@ def test_cluster_view_holds_members_and_routing() -> None:
     )
     assert view.members["n1"].node_id == "n1"
     assert view.routing is not None and view.routing.epoch == 0
+
+
+def test_apply_routing_adopts_newer_table() -> None:
+    view = ClusterView(members={"n1": _member("n1")}, routing=RoutingTable(epoch=1, assignment={}))
+    newer = RoutingTable(epoch=2, assignment={})
+    assert apply_routing(view, newer).routing is not None
+    assert apply_routing(view, newer).routing.epoch == 2
+
+
+def test_apply_routing_ignores_older_table() -> None:
+    view = ClusterView(members={"n1": _member("n1")}, routing=RoutingTable(epoch=2, assignment={}))
+    older = RoutingTable(epoch=1, assignment={})
+    assert apply_routing(view, older).routing is not None
+    assert apply_routing(view, older).routing.epoch == 2
+
+
+def test_apply_routing_adopts_when_none() -> None:
+    view = ClusterView(members={"n1": _member("n1")})
+    table = RoutingTable(epoch=1, assignment={})
+    assert apply_routing(view, table).routing is not None
+    assert apply_routing(view, table).routing.epoch == 1
+
+
+def test_leader_projection() -> None:
+    view = ClusterView(
+        members={
+            "leader": MemberState(
+                node_id="leader", role=NodeRole.LEADER, epoch=4, incarnation=1, priority=1, kv_seq=9
+            ),
+            "n1": _member("n1"),
+        },
+        routing=RoutingTable(epoch=3, assignment={}),
+    )
+    proj = leader_projection(view)
+    assert proj.leader == "leader"
+    assert proj.epoch == 4
+    assert proj.kv_seq == 9
+    assert proj.routing_epoch == 3
+
+
+def test_leader_projection_empty_view() -> None:
+    proj = leader_projection(ClusterView(members={}))
+    assert proj.leader is None
+    assert proj.epoch == 0
+    assert proj.kv_seq == 0
+    assert proj.routing_epoch == 0

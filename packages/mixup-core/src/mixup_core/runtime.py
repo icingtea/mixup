@@ -77,3 +77,19 @@ class ClusterView(BaseModel):
 
     members: dict[NodeId, MemberState]
     routing: RoutingTable | None = None
+
+
+class LeaderProjection(BaseModel):
+    """What ``GET /leader`` returns: a read-only projection of the current view."""
+
+    leader: NodeId | None
+    epoch: Epoch
+    kv_seq: int
+    routing_epoch: Epoch
+
+
+def apply_routing(view: ClusterView, table: RoutingTable) -> ClusterView:
+    """Adopt ``table`` if it is newer than the view's current routing table."""
+    if view.routing is None or table.is_newer_than(view.routing):
+        return ClusterView(members=view.members, routing=table)
+    return view

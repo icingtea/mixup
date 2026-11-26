@@ -6,7 +6,7 @@ KV-cache ledger, so the winner can resume generation with the least recompute โ€
 "most up-to-date log wins" idea as Raft's election restriction ([Raft] ยง5.4.1).
 """
 
-from .runtime import ClusterView
+from .runtime import ClusterView, LeaderProjection
 from .types import MemberStatus, NodeId
 
 
@@ -20,3 +20,18 @@ def elect(view: ClusterView) -> NodeId | None:
     if not alive:
         return None
     return max(alive, key=lambda m: (m.kv_seq, m.priority, m.node_id)).node_id
+
+
+def leader_projection(view: ClusterView) -> LeaderProjection:
+    """Project the view into the fields a client needs to discover the leader.
+
+    ``leader`` is the highest-ranked alive member (see ``elect``); the rest are the
+    current maximums across the view, so a client can compare epochs/kv_seq between nodes.
+    """
+    members = view.members.values()
+    return LeaderProjection(
+        leader=elect(view),
+        epoch=max((m.epoch for m in members), default=0),
+        kv_seq=max((m.kv_seq for m in members), default=0),
+        routing_epoch=view.routing.epoch if view.routing else 0,
+    )
