@@ -11,6 +11,18 @@ from pydantic import BaseModel, field_validator, model_validator
 ContainerName = str
 """A node's name, which is also its hostname on the Docker network, e.g. "container_2"."""
 
+NodeId = str
+"""A node's unique id (its container name / hostname)."""
+
+Epoch = int
+"""A monotonic logical clock of leadership generations, incremented each election."""
+
+NodePriority = int
+"""An election tie-break; higher wins."""
+
+Incarnation = int
+"""A node's boot counter, incremented each restart, so a restarted node is distinguishable."""
+
 ExpertId = int
 """A global expert index within a single layer, 0 .. num_local_experts-1."""
 
@@ -33,6 +45,14 @@ class NodeRole(StrEnum):
 
     LEADER = "leader"
     EXPERT = "expert"
+
+
+class MemberStatus(StrEnum):
+    """Liveness of a member, per the SWIM failure detector (see gossip.py)."""
+
+    ALIVE = "alive"
+    SUSPECT = "suspect"
+    DEAD = "dead"
 
 
 class StartupConfig(BaseModel):

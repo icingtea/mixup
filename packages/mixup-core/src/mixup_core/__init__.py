@@ -18,6 +18,7 @@ from .constants import (
     NETWORK_NAME,
     address,
 )
+from .election import elect
 from .env import (
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_PROMPT,
@@ -26,14 +27,38 @@ from .env import (
     dump_node_env,
     load_node_env,
 )
+from .gossip import (
+    Ack,
+    Alive,
+    Dead,
+    GossipMsg,
+    Ping,
+    PingReq,
+    Suspect,
+    apply_gossip,
+)
+from .kvledger import LedgerHeader, decode_header, encode_header
+from .runtime import (
+    ClusterView,
+    LoadMetrics,
+    MemberState,
+    RoutingEntry,
+    RoutingTable,
+)
+from .scheduler import LeastLoadedPolicy, PlacementPolicy, rebalance_experts
 from .startup_config import load_startup_config
 from .topology import build_lut, expert_containers, experts_for, validate_partition
 from .types import (
     ContainerName,
+    Epoch,
     ExpertAlloc,
     ExpertId,
     ExpertList,
     ExpertRoute,
+    Incarnation,
+    MemberStatus,
+    NodeId,
+    NodePriority,
     NodeRole,
     StartupConfig,
 )
@@ -43,11 +68,16 @@ __version__ = "0.1.0"
 __all__ = [
     "ContainerName",
     "NodeRole",
+    "MemberStatus",
     "StartupConfig",
+    "Epoch",
     "ExpertAlloc",
     "ExpertId",
     "ExpertList",
     "ExpertRoute",
+    "Incarnation",
+    "NodeId",
+    "NodePriority",
     "NodeEnv",
     "DEFAULT_MAX_NEW_TOKENS",
     "DEFAULT_PROMPT",
@@ -70,4 +100,27 @@ __all__ = [
     "load_startup_config",
     "load_node_env",
     "validate_partition",
+    # runtime state
+    "ClusterView",
+    "LoadMetrics",
+    "MemberState",
+    "RoutingEntry",
+    "RoutingTable",
+    "elect",
+    "LeastLoadedPolicy",
+    "PlacementPolicy",
+    "rebalance_experts",
+    # gossip
+    "Ack",
+    "Alive",
+    "Dead",
+    "GossipMsg",
+    "Ping",
+    "PingReq",
+    "Suspect",
+    "apply_gossip",
+    # kv ledger
+    "LedgerHeader",
+    "decode_header",
+    "encode_header",
 ]
