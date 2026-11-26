@@ -5,6 +5,7 @@ control loop: leaders generate, followers run a watchdog that promotes them on l
 failure (Phases 3/4). The FastAPI app (built in infer.py) reads this state.
 """
 
+import gc
 import logging
 import threading
 import time
@@ -175,6 +176,11 @@ class Node:
                 shed_view = self.view
             broadcast_routing(shed_view, self.name)
             self.expert_group = None
+            # Free the shed experts' GPU memory before loading the dense model, otherwise
+            # the promotion can OOM (CUBLAS_STATUS_ALLOC_FAILED) on a shared GPU.
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             logger.info("%s: shed experts, becoming leader", self.name)
 
         assert self.view.routing is not None
