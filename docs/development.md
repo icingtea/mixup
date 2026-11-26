@@ -14,12 +14,17 @@ source dirs, `.temp` is excluded.
 
 ## Tests
 
-`pytest` (in `tests/`). The tests cover the pure, torch-free parts:
+`pytest` (in `tests/`). The tests cover the pure, torch-free parts plus the torch-free
+gossip transport:
 
-- `test_config.py` — `StartupConfig` validation (duplicates, leader-in-experts) and loading.
-- `test_topology.py` — `build_lut`, `experts_for`, `validate_partition`
-  (coverage + contiguity failures).
-- `test_env.py` — `NodeEnv` (de)serialization round-trip and defaults.
+- `test_config.py`, `test_topology.py`, `test_env.py` — `StartupConfig`, routing, `NodeEnv`.
+- `test_runtime.py`, `test_election.py`, `test_scheduler.py`, `test_kvledger.py` — the
+  live runtime state model.
+- `test_gossip.py`, `test_failure_detection.py`, `test_anti_entropy.py`,
+  `test_gossip_engine.py` — the SWIM state machine, detector, merge, and engine.
+- `test_gossip_http.py`, `test_gossip_loop.py` — the torch-free transport (needs
+  `fastapi` + `httpx` in the venv).
+- `test_simulation.py` — an in-core failover simulation.
 
 `pytest` is in the lock's `dev` group but not surfaced into the dev shell by uv2nix
 (see [nix-and-uv.md](nix-and-uv.md)), so run tests with a throwaway venv:
@@ -28,12 +33,15 @@ source dirs, `.temp` is excluded.
 nix shell nixpkgs#python313 --command bash -lc '
   export UV_PYTHON=$(command -v python3)
   uv venv /tmp/mixup-test-venv
-  uv pip install --python /tmp/mixup-test-venv/bin/python -q pytest pydantic
-  PYTHONPATH="packages/mixup-core/src" /tmp/mixup-test-venv/bin/python -m pytest tests -q
+  uv pip install --python /tmp/mixup-test-venv/bin/python -q pytest pydantic fastapi httpx
+  PYTHONPATH="packages/mixup-core/src:packages/mixup-node/src" \
+    /tmp/mixup-test-venv/bin/python -m pytest tests -q
 '
 ```
 
-The topology tests only need `mixup_core` (torch-free) — that's the point of ADR-002.
+The core tests only need `mixup_core` (torch-free) — that's the point of ADR-002. The
+transport tests import `mixup_node.gossip_http`/`gossip_loop`, which are also torch-free
+(they only touch `mixup_core` + FastAPI), so the whole suite runs without torch.
 
 ## Lockfile
 
