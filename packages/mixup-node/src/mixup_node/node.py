@@ -32,7 +32,7 @@ from mixup_core.scheduler import (
     handle_node_failure,
     rebalance_experts,
 )
-from mixup_core.types import MemberStatus, NodeRole
+from mixup_core.types import NodeRole
 
 from .dispatch import Dispatcher
 from .metrics import MetricsCollector
@@ -61,32 +61,30 @@ class _CheckpointProcessor(LogitsProcessor):
 
 
 def broadcast_routing(view: ClusterView, by_node: str) -> None:
-    """Push the current routing table to every alive expert node (so they load new experts).
+    """Push the current routing table to every expert node (so they load new experts).
 
-    Retries each node a few times: a rejoining node's server may not be listening yet, so
-    a single fire-and-forget push races its boot.
+    Iterates the routing table's expert nodes (not the membership roster), so a node that
+    was rebalanced away or died is not contacted. Retries each node a few times: a
+    rejoining node's server may not be listening yet, so a single fire-and-forget push
+    races its boot.
     """
     table = view.routing
     if table is None:
         return
     payload = table.model_dump()
-    for member in view.members.values():
-        if member.role is NodeRole.EXPERT and member.status is MemberStatus.ALIVE:
-            sent = False
-            for _ in range(5):
-                try:
-                    requests.post(
-                        f"{address(member.node_id)}/routing", json=payload, timeout=60
-                    )
-                    logger.info(
-                        "broadcast: sent routing epoch %d to %s", table.epoch, member.node_id
-                    )
-                    sent = True
-                    break
-                except RequestException:
-                    time.sleep(1)
-            if not sent:
-                logger.warning("broadcast: could not reach %s during rebalance", member.node_id)
+    nodes = sorted({entry.node_id for entry in table.assignment.values()})
+    for node_id in nodes:
+        sent = False
+        for _ in range(5):
+            try:
+                requests.post(f"{address(node_id)}/routing", json=payload, timeout=5)
+                logger.info("broadcast: sent routing epoch %d to %s", table.epoch, node_id)
+                sent = True
+                break
+            except RequestException:
+                time.sleep(1)
+        if not sent:
+            logger.warning("broadcast: could not reach %s during rebalance", node_id)
 
 
 class Node:
