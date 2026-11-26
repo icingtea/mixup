@@ -48,13 +48,19 @@ def build_image(client: docker.DockerClient) -> Image:
     The SDK's legacy /build endpoint does not run BuildKit, so RUN --mount cache
     mounts (and fast code-only rebuilds) don't work there. We shell out to the CLI,
     which uses the BuildKit builder and streams build output directly.
+
+    ``--network=host`` is required: Docker's default bridge DNS cannot resolve the
+    CPU-torch wheel host (``download-r2.pytorch.org``), so the build RUN steps use the
+    host's DNS (which can).
     """
     logger.info(
         "BUILDING IMAGE %s:%s (first build downloads torch, takes a while)...",
         IMAGE_NAME,
         IMAGE_TAG,
     )
-    proc = subprocess.run(["docker", "build", "--tag", f"{IMAGE_NAME}:{IMAGE_TAG}", "."])
+    proc = subprocess.run(
+        ["docker", "build", "--network=host", "--tag", f"{IMAGE_NAME}:{IMAGE_TAG}", "."]
+    )
     if proc.returncode != 0:
         raise BuildError(f"docker build failed with exit status {proc.returncode}", None)
     logger.info("BUILT IMAGE %s:%s", IMAGE_NAME, IMAGE_TAG)
