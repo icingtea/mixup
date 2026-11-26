@@ -34,7 +34,7 @@ nix shell nixpkgs#python313 --command bash -lc '
   export UV_PYTHON=$(command -v python3)
   uv venv /tmp/mixup-test-venv
   uv pip install --python /tmp/mixup-test-venv/bin/python -q pytest pydantic fastapi httpx
-  PYTHONPATH="packages/mixup-core/src:packages/mixup-node/src" \
+  PYTHONPATH="packages/mixup-core/src:packages/mixup-node/src:packages/mixup-repl/src" \
     /tmp/mixup-test-venv/bin/python -m pytest tests -q
 '
 ```

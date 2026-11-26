@@ -37,13 +37,18 @@ logger = logging.getLogger(__name__)
 class _CheckpointProcessor(LogitsProcessor):
     """Writes the token-sequence checkpoint after each generated token (before sampling)."""
 
-    def __init__(self, prompt_len: int, path) -> None:
+    def __init__(self, prompt_len: int, max_new_tokens: int, path) -> None:
         self.prompt_len = prompt_len
+        self.max_new_tokens = max_new_tokens
         self.path = path
 
     def __call__(self, input_ids, scores):
         kv_seq = input_ids.shape[1] - self.prompt_len
-        checkpoint = Checkpoint(kv_seq=kv_seq, input_ids=input_ids[0].tolist())
+        checkpoint = Checkpoint(
+            kv_seq=kv_seq,
+            input_ids=input_ids[0].tolist(),
+            max_new_tokens=self.max_new_tokens,
+        )
         self.path.write_text(encode_checkpoint(checkpoint).decode())
         return scores
 
@@ -85,7 +90,7 @@ class Node:
         """Entry point for the background control thread."""
         if self.role is NodeRole.LEADER:
             self._become_leader()
-            self._generate()
+            self._generate(self.env.prompt, self.env.max_new_tokens)
         else:
             self._load_experts()
             self._watchdog()
@@ -152,7 +157,11 @@ class Node:
 
     # -- generation --------------------------------------------------------
 
-    def _generate(self, resume: bool = False) -> None:
+    def generate(self, prompt: str, max_new_tokens: int) -> str:
+        """Run a generation on demand (used by ``POST /generate``); return the text."""
+        return self._generate(prompt, max_new_tokens)
+
+    def _generate(self, prompt: str, max_new_tokens: int, resume: bool = False) -> str:
         assert self.model is not None and self.tokenizer is not None
         assert self.dispatcher is not None
         self.dispatcher.wait_for_experts()
@@ -161,28 +170,32 @@ class Node:
             checkpoint = decode_checkpoint(CHECKPOINT_FILE.read_bytes())
             ids = torch.tensor([checkpoint.input_ids])
             prompt_len = len(checkpoint.input_ids) - checkpoint.kv_seq
-            remaining = max(0, self.env.max_new_tokens - checkpoint.kv_seq)
+            target = checkpoint.max_new_tokens
+            remaining = max(0, target - checkpoint.kv_seq)
             logger.info(
                 "resuming from checkpoint: kv_seq=%d, %d tokens left",
                 checkpoint.kv_seq,
                 remaining,
             )
         else:
-            ids = self.tokenizer(self.env.prompt, return_tensors="pt").input_ids
+            ids = self.tokenizer(prompt, return_tensors="pt").input_ids
             prompt_len = ids.shape[1]
-            remaining = self.env.max_new_tokens
+            target = max_new_tokens
+            remaining = max_new_tokens
 
         if remaining <= 0:
             logger.info("generation already complete")
-            return
+            return ""
 
         CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        processor = _CheckpointProcessor(prompt_len, CHECKPOINT_FILE)
+        processor = _CheckpointProcessor(prompt_len, target, CHECKPOINT_FILE)
         with torch.no_grad():
             out = self.model.generate(
                 ids, max_new_tokens=remaining, do_sample=False, logits_processor=[processor]
             )
-        logger.info("generated: %s", self.tokenizer.decode(out[0][prompt_len:]))
+        text = self.tokenizer.decode(out[0][prompt_len:])
+        logger.info("generated: %s", text)
+        return text
 
     # -- watchdog ----------------------------------------------------------
 
@@ -215,5 +228,5 @@ class Node:
                 logger.info("%s: I win the election; promoting to leader", self.name)
                 self.role = NodeRole.LEADER
                 self._become_leader()
-                self._generate(resume=True)
+                self._generate("", 0, resume=True)
                 return

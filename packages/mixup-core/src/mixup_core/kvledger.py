@@ -46,12 +46,13 @@ class Checkpoint(BaseModel):
     """A token-sequence checkpoint for resume (the plan's replay/recovery path).
 
     ``input_ids`` is the full sequence so far (prompt + generated); ``kv_seq`` is how many
-    tokens have been generated. A promoted leader re-runs the prefix from these ids and
-    continues, so no generated token is lost — only the prefix forward pass is recomputed.
+    tokens have been generated; ``max_new_tokens`` is the target, so a promoted leader can
+    compute how many remain without any out-of-band state.
     """
 
     kv_seq: int
     input_ids: list[int]
+    max_new_tokens: int
 
 
 def encode_checkpoint(checkpoint: Checkpoint) -> bytes:

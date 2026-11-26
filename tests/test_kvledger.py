@@ -24,5 +24,5 @@ def test_header_roundtrip() -> None:
 
 
 def test_checkpoint_roundtrip() -> None:
-    checkpoint = Checkpoint(kv_seq=7, input_ids=[1, 2, 3, 4])
+    checkpoint = Checkpoint(kv_seq=7, input_ids=[1, 2, 3, 4], max_new_tokens=50)
     assert decode_checkpoint(encode_checkpoint(checkpoint)) == checkpoint

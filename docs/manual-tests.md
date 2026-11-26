@@ -98,3 +98,22 @@ loses ≤1 token's work.
   `prompt_len = len(input_ids) - kv_seq`.
 
 ---
+
+## Phase 9 — REPL client (`mixup-repl`)
+
+With the cluster running, prompt it from the host (no need to read docker logs):
+
+```bash
+mixup-repl "What is mixture of experts?" --max-new-tokens 20
+```
+
+**Expected:** it discovers the leader and prints a completion.
+
+**If it fails:**
+- `no leader found` → the cluster isn't running, or the port mapping is off. Check
+  `docker ps` (leader on `localhost:9000`) and `node_urls` in `mixup_repl/repl.py`.
+- `error talking to http://localhost:9000` → the leader's `/generate` returned non-2xx.
+  Check `docker logs container_1` (the leader must have its dense model loaded; a
+  follower returns 503).
+
+---

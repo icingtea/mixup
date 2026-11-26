@@ -10,7 +10,7 @@ import logging
 import threading
 
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from transformers import GraniteMoeConfig
 
 from mixup_core.constants import INTERNAL_PORT, MODEL_DIR
@@ -18,6 +18,7 @@ from mixup_core.election import leader_projection
 from mixup_core.env import load_node_env
 from mixup_core.runtime import RoutingTable
 from mixup_core.topology import cluster_view_from_config, validate_partition
+from mixup_core.types import GenerateRequest, GenerateResponse
 
 from .node import Node
 from .serialization import ExpertRequest, ExpertResponse
@@ -54,6 +55,13 @@ def build_app(node: Node) -> FastAPI:
             logger.info("routing: received table epoch=%d", table.epoch)
             node.expert_group.set_routing(table)
         return {"ok": True}
+
+    @app.post("/generate")
+    def generate(request: GenerateRequest) -> dict:
+        if node.model is None:
+            raise HTTPException(status_code=503, detail="not the leader")
+        text = node.generate(request.prompt, request.max_new_tokens)
+        return GenerateResponse(text=text).model_dump()
 
     @app.post("/{layer}")
     async def run(layer: int, request: Request) -> Response:

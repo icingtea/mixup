@@ -94,3 +94,16 @@ class StartupConfig(BaseModel):
     def initial_role(self, name: ContainerName) -> NodeRole:
         """The role `name` starts in."""
         return NodeRole.LEADER if name == self.initial_leader else NodeRole.EXPERT
+
+
+class GenerateRequest(BaseModel):
+    """A generation request sent to the leader's ``POST /generate``."""
+
+    prompt: str
+    max_new_tokens: int = 50
+
+
+class GenerateResponse(BaseModel):
+    """The leader's reply to a generation request."""
+
+    text: str
