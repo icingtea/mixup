@@ -1,6 +1,6 @@
 """Tests for the SWIM membership state machine (apply_gossip)."""
 
-from mixup_core.gossip import Alive, Dead, Ping, Suspect, apply_gossip
+from mixup_core.gossip import Ack, Alive, Dead, Ping, PingReq, Suspect, apply_gossip
 from mixup_core.runtime import ClusterView, MemberState
 from mixup_core.types import MemberStatus, NodeRole
 
@@ -63,3 +63,16 @@ def test_unknown_member_ignored() -> None:
     view = _view(_member("a"))
     out = apply_gossip(view, Dead(node_id="zzz", incarnation=1, by_node="b"))
     assert "zzz" not in out.members
+
+
+def test_ack_and_pingreq_are_noops() -> None:
+    view = _view(_member("a", status=MemberStatus.SUSPECT))
+    out = apply_gossip(view, Ack(node_id="a", incarnation=1, epoch=0, kv_seq=0))
+    out = apply_gossip(out, PingReq(from_node="b", target="a", incarnation=1))
+    assert out.members["a"].status is MemberStatus.SUSPECT
+
+
+def test_alive_revives_suspect_at_same_incarnation() -> None:
+    view = _view(_member("a", status=MemberStatus.SUSPECT))
+    out = apply_gossip(view, Alive(node_id="a", incarnation=1, epoch=0))
+    assert out.members["a"].status is MemberStatus.ALIVE

@@ -43,6 +43,13 @@ def test_routing_table_tie_break_is_total() -> None:
     assert a.is_newer_than(b) != b.is_newer_than(a)
 
 
+def test_routing_table_equal_tables_are_not_newer() -> None:
+    a = RoutingTable(epoch=3, assignment={0: RoutingEntry(node_id="n1", slot=0)})
+    b = RoutingTable(epoch=3, assignment={0: RoutingEntry(node_id="n1", slot=0)})
+    assert not a.is_newer_than(b)
+    assert not b.is_newer_than(a)
+
+
 def test_cluster_view_holds_members_and_routing() -> None:
     view = ClusterView(
         members={"n1": _member("n1")},
