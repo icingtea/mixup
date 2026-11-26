@@ -5,6 +5,7 @@ recomputed with a ``//``/``%`` heuristic, so the routing table can never disagre
 with the config.
 """
 
+from .runtime import RoutingEntry, RoutingTable
 from .types import ExpertId, ExpertRoute, StartupConfig
 
 
@@ -48,3 +49,13 @@ def validate_partition(config: StartupConfig, num_experts: int) -> None:
         ordered = sorted(experts)
         if ordered != list(range(min(ordered), max(ordered) + 1)):
             raise ValueError(f"container {container!r} experts are not contiguous: {experts}")
+
+
+def routing_table_from_config(config: StartupConfig) -> RoutingTable:
+    """Build the initial epoch-0 routing table from the startup layout."""
+    lut = build_lut(config)
+    assignment = {
+        expert: RoutingEntry(node_id=node, slot=slot)
+        for expert, (node, slot) in lut.items()
+    }
+    return RoutingTable(epoch=0, assignment=assignment)

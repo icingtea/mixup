@@ -52,9 +52,20 @@ from .runtime import (
     RoutingTable,
     apply_routing,
 )
-from .scheduler import LeastLoadedPolicy, PlacementPolicy, rebalance_experts
+from .scheduler import (
+    LeastLoadedPolicy,
+    PlacementPolicy,
+    handle_node_failure,
+    rebalance_experts,
+)
 from .startup_config import load_startup_config
-from .topology import build_lut, expert_containers, experts_for, validate_partition
+from .topology import (
+    build_lut,
+    expert_containers,
+    experts_for,
+    routing_table_from_config,
+    validate_partition,
+)
 from .types import (
     ContainerName,
     Epoch,
@@ -106,6 +117,7 @@ __all__ = [
     "experts_for",
     "load_startup_config",
     "load_node_env",
+    "routing_table_from_config",
     "validate_partition",
     # runtime state
     "ClusterView",
@@ -120,6 +132,7 @@ __all__ = [
     "LeastLoadedPolicy",
     "PlacementPolicy",
     "rebalance_experts",
+    "handle_node_failure",
     # failure detection
     "Action",
     "FailureDetector",

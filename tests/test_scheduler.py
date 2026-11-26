@@ -1,7 +1,7 @@
 """Tests for expert placement: rebalance_experts and the least-loaded policy."""
 
 from mixup_core.runtime import ClusterView, LoadMetrics, MemberState, RoutingEntry, RoutingTable
-from mixup_core.scheduler import LeastLoadedPolicy, rebalance_experts
+from mixup_core.scheduler import LeastLoadedPolicy, handle_node_failure, rebalance_experts
 from mixup_core.types import MemberStatus, NodeRole
 
 
@@ -90,3 +90,32 @@ def test_slots_recomputed_contiguously() -> None:
 
     assert table.assignment[0].slot == 0
     assert table.assignment[5].slot == 1
+
+
+def test_handle_node_failure_rebalances() -> None:
+    view = ClusterView(
+        members={
+            "leader": MemberState(
+                node_id="leader", role=NodeRole.LEADER, epoch=0, incarnation=1, priority=1
+            ),
+            "n1": _member("n1"),
+            "n2": _member("n2"),
+        },
+        routing=_table(
+            {
+                0: RoutingEntry(node_id="n1", slot=0),
+                1: RoutingEntry(node_id="n1", slot=1),
+                2: RoutingEntry(node_id="n2", slot=0),
+            }
+        ),
+    )
+
+    out = handle_node_failure(view, "n1", "leader")
+
+    assert out.members["n1"].status is MemberStatus.DEAD
+    assert out.routing is not None
+    assert set(out.routing.assignment) == {0, 1, 2}  # coverage preserved
+    assert out.routing.assignment[0].node_id == "n2"  # orphaned experts moved
+    assert out.routing.assignment[1].node_id == "n2"
+    assert out.routing.assignment[2].node_id == "n2"
+    assert out.routing.epoch == view.routing.epoch + 1

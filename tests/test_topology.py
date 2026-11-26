@@ -2,7 +2,14 @@
 
 import pytest
 
-from mixup_core.topology import build_lut, expert_containers, experts_for, validate_partition
+from mixup_core.runtime import RoutingEntry
+from mixup_core.topology import (
+    build_lut,
+    expert_containers,
+    experts_for,
+    routing_table_from_config,
+    validate_partition,
+)
 from mixup_core.types import StartupConfig
 
 
@@ -55,6 +62,13 @@ def test_experts_for_returns_sorted() -> None:
     )
     lut = build_lut(config)
     assert experts_for(lut, "c2") == [3, 7, 9]
+
+
+def test_routing_table_from_config() -> None:
+    table = routing_table_from_config(_config())
+    assert table.epoch == 0
+    assert table.assignment[0] == RoutingEntry(node_id="container_2", slot=0)
+    assert table.assignment[7] == RoutingEntry(node_id="container_3", slot=3)
 
 
 def test_validate_partition_ok() -> None:

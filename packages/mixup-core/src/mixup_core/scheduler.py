@@ -8,6 +8,7 @@ commutativity (see docs/plan/phase-6-dynamic-dispatch.md).
 
 from typing import Protocol
 
+from .gossip import Dead, apply_gossip
 from .runtime import ClusterView, RoutingEntry, RoutingTable
 from .types import ExpertId, MemberStatus, NodeId, NodeRole
 
@@ -89,3 +90,27 @@ def rebalance_experts(
             assignment[expert] = RoutingEntry(node_id=node, slot=slot)
 
     return RoutingTable(epoch=prev.epoch + 1, assignment=assignment)
+
+
+def handle_node_failure(
+    view: ClusterView,
+    dead_node: NodeId,
+    by_node: NodeId,
+    policy: PlacementPolicy | None = None,
+) -> ClusterView:
+    """Mark ``dead_node`` DEAD and rebalance its experts onto the survivors.
+
+    Returns a new view whose routing table (epoch bumped) covers every expert. This is
+    the pure core of failover: the central calls it on a connection failure, then
+    broadcasts the resulting table to the surviving experts (Phase 6/7).
+    """
+    member = view.members.get(dead_node)
+    incarnation = member.incarnation if member else 1
+    view = apply_gossip(
+        view,
+        Dead(node_id=dead_node, incarnation=incarnation, by_node=by_node),
+    )
+    if view.routing is not None:
+        new_table = rebalance_experts(view, view.routing, policy or LeastLoadedPolicy())
+        view = ClusterView(members=view.members, routing=new_table)
+    return view
