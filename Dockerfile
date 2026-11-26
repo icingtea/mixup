@@ -36,6 +36,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 ENV PATH="/usr/local/app/.venv/bin:$PATH"
 
+# All containers share one GPU via CDI. Expandable segments avoid allocator
+# fragmentation across repeated expert reloads, which otherwise OOMs the
+# shared GPU (CUBLAS_STATUS_ALLOC_FAILED / torch.OutOfMemoryError).
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 EXPOSE 8000
 
 RUN useradd app

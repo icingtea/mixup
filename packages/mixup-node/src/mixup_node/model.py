@@ -5,6 +5,7 @@ routers, final norm); each expert container holds a few experts for every layer.
 """
 
 import copy
+import gc
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -131,6 +132,15 @@ class ExpertGroup:
         removed = sorted(set(self.experts) - set(experts))
         self._lut = lut
         self.experts = experts
+        # Free the old experts' GPU memory before loading the new set. Repeated
+        # rebalances otherwise leave orphaned expert copies cached in the CUDA
+        # allocator, which on a shared GPU starves the other containers (OOM /
+        # CUBLAS_STATUS_ALLOC_FAILED). empty_cache() returns the blocks to the
+        # driver so sibling processes can actually use them.
+        self.layers = []
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         self.layers = self._load_all() if experts else []
         logger.info(
             "%s: experts now %s (gained %s, lost %s)",
