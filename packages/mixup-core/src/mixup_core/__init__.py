@@ -27,6 +27,7 @@ from .env import (
     dump_node_env,
     load_node_env,
 )
+from .failure_detection import Action, FailureDetector
 from .gossip import (
     Ack,
     Alive,
@@ -36,6 +37,7 @@ from .gossip import (
     PingReq,
     Suspect,
     apply_gossip,
+    merge_views,
 )
 from .kvledger import LedgerHeader, decode_header, encode_header
 from .runtime import (
@@ -110,6 +112,9 @@ __all__ = [
     "LeastLoadedPolicy",
     "PlacementPolicy",
     "rebalance_experts",
+    # failure detection
+    "Action",
+    "FailureDetector",
     # gossip
     "Ack",
     "Alive",
@@ -119,6 +124,7 @@ __all__ = [
     "PingReq",
     "Suspect",
     "apply_gossip",
+    "merge_views",
     # kv ledger
     "LedgerHeader",
     "decode_header",

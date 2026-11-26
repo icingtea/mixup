@@ -10,7 +10,7 @@ References: [SWIM], [Serf-gossip].
 
 from pydantic import BaseModel
 
-from .runtime import ClusterView
+from .runtime import ClusterView, MemberState
 from .types import Epoch, Incarnation, MemberStatus, NodeId
 
 
@@ -105,3 +105,43 @@ def apply_gossip(view: ClusterView, msg: GossipMsg) -> ClusterView:
     if isinstance(msg, Dead):
         return _set_status(view, msg.node_id, MemberStatus.DEAD)
     return view
+
+
+_STATUS_RANK = {
+    MemberStatus.ALIVE: 0,
+    MemberStatus.SUSPECT: 1,
+    MemberStatus.DEAD: 2,
+}
+
+
+def _member_newer(a: MemberState, b: MemberState) -> bool:
+    """Is `a`'s membership state newer than `b`'s?
+
+    A higher incarnation always wins (a restart). Within the same incarnation, status
+    progresses ALIVE -> SUSPECT -> DEAD, so the more-progressed status wins.
+    """
+    if a.incarnation != b.incarnation:
+        return a.incarnation > b.incarnation
+    return _STATUS_RANK[a.status] > _STATUS_RANK[b.status]
+
+
+def merge_views(local: ClusterView, remote: ClusterView) -> ClusterView:
+    """Anti-entropy reconciliation: adopt the newer of each member's state and the newer table.
+
+    Used by push-pull gossip to converge two nodes' views. For each member present in both
+    views, the newer state wins (see ``_member_newer``); members in only one view are kept,
+    and the routing table is adopted only if the remote's is newer.
+    """
+    members = dict(local.members)
+    for node_id, remote_member in remote.members.items():
+        local_member = members.get(node_id)
+        if local_member is None or _member_newer(remote_member, local_member):
+            members[node_id] = remote_member
+
+    routing = local.routing
+    if remote.routing is not None and (
+        routing is None or remote.routing.is_newer_than(routing)
+    ):
+        routing = remote.routing
+
+    return ClusterView(members=members, routing=routing)
