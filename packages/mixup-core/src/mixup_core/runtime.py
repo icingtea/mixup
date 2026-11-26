@@ -93,3 +93,21 @@ def apply_routing(view: ClusterView, table: RoutingTable) -> ClusterView:
     if view.routing is None or table.is_newer_than(view.routing):
         return ClusterView(members=view.members, routing=table)
     return view
+
+
+def expert_moves(
+    old: RoutingTable,
+    new: RoutingTable,
+) -> list[tuple[ExpertId, NodeId | None, NodeId]]:
+    """Experts whose owner changed between two tables, as ``(expert, old_owner, new_owner)``.
+
+    ``old_owner`` is ``None`` if the expert was not in ``old`` (shouldn't happen on
+    failover, but handled defensively).
+    """
+    moves: list[tuple[ExpertId, NodeId | None, NodeId]] = []
+    for expert, entry in new.assignment.items():
+        old_entry = old.assignment.get(expert)
+        old_owner = old_entry.node_id if old_entry else None
+        if old_entry is None or old_entry.node_id != entry.node_id:
+            moves.append((expert, old_owner, entry.node_id))
+    return moves

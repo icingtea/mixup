@@ -5,6 +5,7 @@ routers, final norm); each expert container holds a few experts for every layer.
 """
 
 import copy
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -28,6 +29,8 @@ Dispatch = Callable[[int, Tensor, Tensor, Tensor], Tensor]
 SKIP = 999
 """Slot number for experts held by another container. transformers skips any slot
 number past the end of a container's experts, so these picks do nothing there."""
+
+logger = logging.getLogger(__name__)
 
 
 def empty_model(model_config: GraniteMoeConfig) -> GraniteMoeForCausalLM:
@@ -119,9 +122,18 @@ class ExpertGroup:
         experts = experts_for(lut, self.name)
         if experts == self.experts:
             return
+        added = sorted(set(experts) - set(self.experts))
+        removed = sorted(set(self.experts) - set(experts))
         self._lut = lut
         self.experts = experts
         self.layers = self._load_all() if experts else []
+        logger.info(
+            "%s: experts now %s (gained %s, lost %s)",
+            self.name,
+            experts,
+            added,
+            removed,
+        )
 
     def _load_all(self) -> list[GraniteMoeExperts]:
         with safe_open(self.model_file, framework="pt") as f:

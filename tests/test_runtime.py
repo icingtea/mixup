@@ -88,6 +88,35 @@ def test_apply_routing_adopts_when_none() -> None:
     assert apply_routing(view, table).routing.epoch == 1
 
 
+def test_expert_moves_reports_owner_changes() -> None:
+    from mixup_core.runtime import expert_moves
+
+    old = RoutingTable(
+        epoch=0,
+        assignment={
+            0: RoutingEntry(node_id="n1", slot=0),
+            1: RoutingEntry(node_id="n1", slot=1),
+            2: RoutingEntry(node_id="n2", slot=0),
+        },
+    )
+    new = RoutingTable(
+        epoch=1,
+        assignment={
+            0: RoutingEntry(node_id="n2", slot=1),
+            1: RoutingEntry(node_id="n2", slot=2),
+            2: RoutingEntry(node_id="n2", slot=0),
+        },
+    )
+    assert expert_moves(old, new) == [(0, "n1", "n2"), (1, "n1", "n2")]
+
+
+def test_expert_moves_empty_when_no_change() -> None:
+    from mixup_core.runtime import expert_moves
+
+    table = RoutingTable(epoch=0, assignment={0: RoutingEntry(node_id="n1", slot=0)})
+    assert expert_moves(table, table) == []
+
+
 def test_leader_projection() -> None:
     view = ClusterView(
         members={

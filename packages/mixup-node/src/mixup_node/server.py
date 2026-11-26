@@ -1,5 +1,7 @@
 """Expert-side HTTP server: answer expert requests and apply routing-table updates."""
 
+import logging
+
 import uvicorn
 from fastapi import FastAPI, Request, Response
 
@@ -7,6 +9,8 @@ from mixup_core.runtime import RoutingTable
 
 from .model import ExpertGroup
 from .serialization import ExpertRequest, ExpertResponse
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(group: ExpertGroup) -> FastAPI:
@@ -20,6 +24,7 @@ def create_app(group: ExpertGroup) -> FastAPI:
     @app.post("/routing")
     async def routing(request: Request) -> dict:
         table = RoutingTable.model_validate(await request.json())
+        logger.info("routing: received table epoch=%d", table.epoch)
         group.set_routing(table)
         return {"ok": True}
 

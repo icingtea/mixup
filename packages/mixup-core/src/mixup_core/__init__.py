@@ -51,6 +51,7 @@ from .runtime import (
     RoutingEntry,
     RoutingTable,
     apply_routing,
+    expert_moves,
 )
 from .scheduler import (
     LeastLoadedPolicy,
@@ -129,6 +130,7 @@ __all__ = [
     "RoutingEntry",
     "RoutingTable",
     "apply_routing",
+    "expert_moves",
     "elect",
     "leader_projection",
     "LeastLoadedPolicy",
