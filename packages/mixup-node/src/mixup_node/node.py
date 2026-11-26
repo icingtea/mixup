@@ -100,27 +100,32 @@ class Node:
             self._load_experts()
             self._watchdog()
 
-    def _discover_topology(self) -> None:
-        """Check whether another node is already leader; adopt it (demoting self if needed).
+    def _discover_topology(self, grace_seconds: float = 5.0) -> None:
+        """Learn the current leader by probing peers, demoting self if the cluster moved on.
 
-        Called at boot so a restarted node doesn't blindly assume its startup role after
-        the cluster has moved on (e.g. a resurrected old leader must rejoin as a follower
-        of the newly-elected leader instead of re-declaring itself leader).
+        Polls for ``grace_seconds`` (or until a higher-epoch leader is seen) so a fast
+        restart — which can race a still-settling election — still catches the
+        newly-elected leader instead of re-assuming the startup role and re-loading dense.
         """
+        deadline = time.monotonic() + grace_seconds
         best_epoch = 0
         best_leader: str | None = None
-        for name in self.view.members:
-            if name == self.name:
-                continue
-            try:
-                projection = requests.get(f"{address(name)}/leader", timeout=0.5).json()
-            except (RequestException, ValueError):
-                continue
-            leader = projection.get("leader")
-            epoch = projection.get("epoch", 0)
-            if leader is not None and leader != self.name and epoch > best_epoch:
-                best_epoch = epoch
-                best_leader = leader
+        while time.monotonic() < deadline:
+            for name in self.view.members:
+                if name == self.name:
+                    continue
+                try:
+                    projection = requests.get(f"{address(name)}/leader", timeout=0.5).json()
+                except (RequestException, ValueError):
+                    continue
+                leader = projection.get("leader")
+                epoch = projection.get("epoch", 0)
+                if leader is not None and leader != self.name and epoch > best_epoch:
+                    best_epoch = epoch
+                    best_leader = leader
+            if best_leader is not None:
+                break
+            time.sleep(0.5)
 
         if best_leader is not None:
             logger.info(
