@@ -22,10 +22,15 @@ from mixup_core.election import (
     should_become_leader,
 )
 from mixup_core.env import NodeEnv
-from mixup_core.gossip import Dead, apply_gossip
+from mixup_core.gossip import Alive, Dead, apply_gossip
 from mixup_core.kvledger import Checkpoint, decode_checkpoint, encode_checkpoint
 from mixup_core.runtime import ClusterView, RoutingTable
-from mixup_core.scheduler import LeastLoadedPolicy, handle_node_failure, rebalance_experts
+from mixup_core.scheduler import (
+    LeastLoadedPolicy,
+    balance_experts,
+    handle_node_failure,
+    rebalance_experts,
+)
 from mixup_core.types import MemberStatus, NodeRole
 
 from .dispatch import Dispatcher
@@ -98,6 +103,7 @@ class Node:
             self._become_leader()
         else:
             self._load_experts()
+            self._declare_rejoin()
             self._watchdog()
 
     def _discover_topology(self, grace_seconds: float = 5.0) -> None:
@@ -188,6 +194,41 @@ class Node:
             me = self.view.members.get(self.name)
             if me is not None:
                 self.role = me.role
+
+    def _declare_rejoin(self) -> None:
+        """Tell the leader we're back, so it rebalances and hands us a share of experts."""
+        leader = current_leader(self.view)
+        if leader is None or leader == self.name:
+            return
+        try:
+            requests.post(f"{address(leader)}/join", json={"node_id": self.name}, timeout=5)
+            logger.info("%s: declared rejoin to leader %s", self.name, leader)
+        except RequestException:
+            logger.warning("%s: could not declare rejoin to %s", self.name, leader)
+
+    def rejoin(self, node_id: str) -> None:
+        """A node announced it rejoined: mark it alive and rebalance to include it."""
+        with self._lock:
+            member = self.view.members.get(node_id)
+            if member is None:
+                return
+            self.view = apply_gossip(
+                self.view,
+                Alive(
+                    node_id=node_id,
+                    incarnation=member.incarnation + 1,
+                    epoch=member.epoch,
+                ),
+            )
+            if self.view.routing is not None:
+                self.view = ClusterView(
+                    members=self.view.members,
+                    routing=balance_experts(
+                        self.view, self.view.routing, LeastLoadedPolicy()
+                    ),
+                )
+        broadcast_routing(self.view, self.name)
+        logger.info("%s: rebalanced after %s rejoined", self.name, node_id)
 
     def _announce_leader(self) -> None:
         """Tell every other node we are the leader, so they poll us (and can fail over again)."""

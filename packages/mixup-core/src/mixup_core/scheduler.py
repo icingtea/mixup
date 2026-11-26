@@ -57,6 +57,19 @@ def _alive_expert_ids(view: ClusterView) -> set[NodeId]:
     }
 
 
+def _finalize(placed: dict[ExpertId, NodeId], epoch: int) -> RoutingTable:
+    """Derive each node's local slots from its sorted owned list."""
+    by_node: dict[NodeId, list[ExpertId]] = {}
+    for expert, node in placed.items():
+        by_node.setdefault(node, []).append(expert)
+
+    assignment: dict[ExpertId, RoutingEntry] = {}
+    for node, experts in by_node.items():
+        for slot, expert in enumerate(sorted(experts)):
+            assignment[expert] = RoutingEntry(node_id=node, slot=slot)
+    return RoutingTable(epoch=epoch, assignment=assignment)
+
+
 def rebalance_experts(
     view: ClusterView,
     prev: RoutingTable,
@@ -78,18 +91,22 @@ def rebalance_experts(
     unowned = [expert for expert in prev.assignment if expert not in kept]
     placed = policy.place(view, unowned)
 
-    final: dict[ExpertId, NodeId] = {**kept, **placed}
+    return _finalize({**kept, **placed}, prev.epoch + 1)
 
-    by_node: dict[NodeId, list[ExpertId]] = {}
-    for expert, node in final.items():
-        by_node.setdefault(node, []).append(expert)
 
-    assignment: dict[ExpertId, RoutingEntry] = {}
-    for node, experts in by_node.items():
-        for slot, expert in enumerate(sorted(experts)):
-            assignment[expert] = RoutingEntry(node_id=node, slot=slot)
+def balance_experts(
+    view: ClusterView,
+    prev: RoutingTable,
+    policy: PlacementPolicy | None = None,
+) -> RoutingTable:
+    """Redistribute *all* experts evenly across the alive expert nodes (bump epoch).
 
-    return RoutingTable(epoch=prev.epoch + 1, assignment=assignment)
+    Unlike ``rebalance_experts`` (which only moves orphans), this re-places every expert,
+    so it is used when a node *rejoins* — the rejoined node gets a fair share and the
+    others shed some of theirs.
+    """
+    placed = (policy or LeastLoadedPolicy()).place(view, sorted(prev.assignment))
+    return _finalize(placed, prev.epoch + 1)
 
 
 def handle_node_failure(

@@ -73,6 +73,7 @@ from .runtime import (
 from .scheduler import (
     LeastLoadedPolicy,
     PlacementPolicy,
+    balance_experts,
     handle_node_failure,
     rebalance_experts,
 )
@@ -163,6 +164,7 @@ __all__ = [
     "LeastLoadedPolicy",
     "PlacementPolicy",
     "rebalance_experts",
+    "balance_experts",
     "handle_node_failure",
     # failure detection
     "Action",

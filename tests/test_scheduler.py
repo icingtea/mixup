@@ -1,7 +1,12 @@
 """Tests for expert placement: rebalance_experts and the least-loaded policy."""
 
 from mixup_core.runtime import ClusterView, LoadMetrics, MemberState, RoutingEntry, RoutingTable
-from mixup_core.scheduler import LeastLoadedPolicy, handle_node_failure, rebalance_experts
+from mixup_core.scheduler import (
+    LeastLoadedPolicy,
+    balance_experts,
+    handle_node_failure,
+    rebalance_experts,
+)
 from mixup_core.types import MemberStatus, NodeRole
 
 
@@ -119,3 +124,21 @@ def test_handle_node_failure_rebalances() -> None:
     assert out.routing.assignment[1].node_id == "n2"
     assert out.routing.assignment[2].node_id == "n2"
     assert out.routing.epoch == view.routing.epoch + 1
+
+
+def test_balance_experts_gives_rejoined_node_a_share() -> None:
+    prev = _table(
+        {
+            0: RoutingEntry(node_id="n1", slot=0),
+            1: RoutingEntry(node_id="n1", slot=1),
+            2: RoutingEntry(node_id="n2", slot=0),
+            3: RoutingEntry(node_id="n2", slot=1),
+        }
+    )
+    # n3 just rejoined; all three alive experts should now own something.
+    view = _view(_member("n1"), _member("n2"), _member("n3"))
+    table = balance_experts(view, prev, LeastLoadedPolicy())
+
+    assert set(table.assignment) == {0, 1, 2, 3}
+    assert {table.assignment[e].node_id for e in table.assignment} == {"n1", "n2", "n3"}
+    assert table.epoch == prev.epoch + 1

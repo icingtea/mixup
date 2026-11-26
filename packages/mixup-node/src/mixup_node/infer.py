@@ -58,6 +58,14 @@ def build_app(node: Node) -> FastAPI:
             node.expert_group.set_routing(table)
         return {"ok": True}
 
+    @app.post("/join")
+    async def join(request: Request) -> dict:
+        if node.model is None:
+            raise HTTPException(status_code=503, detail="not the leader")
+        data = await request.json()
+        node.rejoin(data["node_id"])
+        return {"ok": True}
+
     @app.post("/generate")
     def generate(request: GenerateRequest) -> dict:
         if node.model is None:
