@@ -19,12 +19,12 @@ class ExpertRequest(BaseModel):
     top_k_weights: Tensor   # [tokens, top_k] bfloat16
 
     def to_bytes(self) -> bytes:
-        """Serialize to the safetensors bytes sent over HTTP."""
+        """Serialize to the safetensors bytes sent over HTTP (moves to CPU)."""
         return save(
             {
-                "hidden_states": self.hidden_states.contiguous(),
-                "top_k_index": self.top_k_index.contiguous(),
-                "top_k_weights": self.top_k_weights.contiguous(),
+                "hidden_states": self.hidden_states.contiguous().cpu(),
+                "top_k_index": self.top_k_index.contiguous().cpu(),
+                "top_k_weights": self.top_k_weights.contiguous().cpu(),
             }
         )
 
@@ -42,7 +42,7 @@ class ExpertResponse(BaseModel):
     out: Tensor   # [tokens, hidden] bfloat16
 
     def to_bytes(self) -> bytes:
-        return save({"out": self.out})
+        return save({"out": self.out.contiguous().cpu()})
 
     @classmethod
     def from_bytes(cls, body: bytes) -> "ExpertResponse":

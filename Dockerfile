@@ -10,7 +10,7 @@ COPY packages ./packages
 
 # Install mixup-node and its workspace dependency mixup-core, frozen to uv.lock,
 # skipping the dev group (ruff/pytest) and the orchestrator (docker). torch resolves
-# to the CPU wheel (see ADR-007), so there are no nvidia-* packages to download.
+# to the CUDA wheel (see ADR-007); the orchestrator passes the GPU through at run time.
 # The uv cache mount persists downloaded wheels across builds, so code-only
 # changes re-run `uv sync` without re-downloading torch.
 RUN --mount=type=cache,target=/root/.cache/uv \

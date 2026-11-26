@@ -33,6 +33,11 @@ number past the end of a container's experts, so these picks do nothing there.""
 logger = logging.getLogger(__name__)
 
 
+def _device() -> torch.device:
+    """The compute device: cuda if available, else cpu."""
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 def empty_model(model_config: GraniteMoeConfig) -> GraniteMoeForCausalLM:
     """Build the whole model with no weights yet (meta device: shapes but no data)."""
     with torch.device("meta"):
@@ -76,7 +81,7 @@ def load_central(
     model.load_state_dict(state, strict=False, assign=True)
     model.tie_weights()
     model.model.rotary_emb = type(model.model.rotary_emb)(model_config)
-    return model.eval()
+    return model.to(_device()).eval()
 
 
 def empty_experts(model_config: GraniteMoeConfig, num_experts: int) -> GraniteMoeExperts:
@@ -149,7 +154,7 @@ class ExpertGroup:
         down = torch.cat([all_down[e : e + 1] for e in self.experts], dim=0)
         experts = empty_experts(self.model_config, len(self.experts))
         experts.load_state_dict({"gate_up_proj": gate_up, "down_proj": down}, assign=True)
-        return experts.eval()
+        return experts.to(_device()).eval()
 
     @torch.no_grad()
     def forward(
@@ -162,7 +167,10 @@ class ExpertGroup:
         """Run this node's share of one layer's experts, zeroing experts it doesn't hold."""
         if not self.experts:
             return torch.zeros_like(hidden_states)
-        device = top_k_index.device
+        device = _device()
+        hidden_states = hidden_states.to(device)
+        top_k_index = top_k_index.to(device)
+        top_k_weights = top_k_weights.to(device)
         mine = torch.tensor(
             [self._lut[e][0] == self.name for e in range(self.num_experts)], device=device
         )[top_k_index]

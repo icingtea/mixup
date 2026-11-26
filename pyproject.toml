@@ -1,13 +1,6 @@
 [tool.uv.workspace]
 members = ["packages/mixup-core", "packages/mixup-node", "packages/mixup-orchestrator", "packages/mixup-repl"]
 
-# CPU-only PyTorch wheels (small, no nvidia-* deps) for fast dev builds. Point
-# torch at this index; every other dependency still resolves from PyPI.
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
 [dependency-groups]
 dev = [
     "pytest>=8.3.0",

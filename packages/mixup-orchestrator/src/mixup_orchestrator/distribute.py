@@ -15,6 +15,7 @@ import docker
 from docker.errors import BuildError, NotFound
 from docker.models.images import Image
 from docker.models.networks import Network
+from docker.types import DeviceRequest
 
 from mixup_core.constants import (
     EXTERNAL_PORT_BASE,
@@ -89,6 +90,7 @@ def start_container(
     config: StartupConfig,
     prompt: str,
     max_new_tokens: int,
+    device_requests: list[DeviceRequest] | None = None,
 ) -> None:
     """Start `name` on the cluster network, reachable from the host on `port`."""
     try:
@@ -124,6 +126,7 @@ def start_container(
             str(MODELS_DIR.resolve()): {"bind": CONTAINER_MODELS_DIR, "mode": "ro"},
             str(LEDGER_DIR.resolve()): {"bind": CONTAINER_LEDGER_DIR, "mode": "rw"},
         },
+        device_requests=device_requests,
     )
     logger.info("STARTED %s", name)
 
@@ -142,6 +145,11 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_MAX_NEW_TOKENS,
         help="tokens for the central node to generate",
     )
+    parser.add_argument(
+        "--no-gpu",
+        action="store_true",
+        help="run CPU-only (don't pass through the GPU)",
+    )
     args = parser.parse_args(argv)
 
     config = load_startup_config(args.config)
@@ -150,6 +158,10 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("model not found at %s", MODEL_FILE)
         logger.error("download it first with: mixup-fetch-model")
         return 1
+
+    device_requests = (
+        None if args.no_gpu else [DeviceRequest(count=-1, capabilities=[["gpu"]])]
+    )
 
     client = docker.from_env()
     image = build_image(client)
@@ -163,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         config,
         args.prompt,
         args.max_new_tokens,
+        device_requests,
     )
     for offset, container_name in enumerate(config.experts):
         start_container(
@@ -173,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
             config,
             args.prompt,
             args.max_new_tokens,
+            device_requests,
         )
     return 0
 

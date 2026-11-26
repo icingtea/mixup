@@ -23,4 +23,3 @@ mixup-node = "mixup_node.infer:start"
 
 [tool.uv.sources]
 mixup-core = { workspace = true }
-torch = { index = "pytorch-cpu" }

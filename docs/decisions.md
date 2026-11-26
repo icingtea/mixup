@@ -94,21 +94,22 @@ libraries (`libmlx5`, `librdmacm`, `libibverbs`) that NixOS doesn't provide — 
 
 ---
 
-## ADR-007: CPU torch wheel (for dev speed; GPU later)
+## ADR-007: GPU (CUDA) torch wheel (CPU only as a dev option)
 
-**Decision.** Resolve torch from the `pytorch-cpu` index
-(`https://download.pytorch.org/whl/cpu`), not PyPI's default CUDA-bundled wheel.
+**Decision.** Resolve torch from PyPI's default CUDA-bundled wheel, and pass the GPU
+through with `--gpus all` (orchestrator `DeviceRequest`). A CPU-only build remains a
+dev-time option via `mixup-orchestrator --no-gpu`.
 
-**Why.** For development, build/startup speed matters more than GPU inference. PyPI's
-default `torch` for Linux bundles CUDA 13 and pulls ~18 `nvidia-*` packages plus
-`triton` — gigabytes that make every `docker build` slow. The CPU wheel (`torch+cpu`)
-drops all of that, so the image is far smaller and builds much faster.
+**Why.** Inference runs on GPU. PyPI's default `torch` for Linux bundles CUDA 13; the
+orchestrator now mounts the GPU into every container by default. During development we
+briefly used the CPU wheel (`pytorch-cpu` index) for fast builds, but that's only for
+when a GPU isn't available — flip back by re-adding the `pytorch-cpu` index + the `torch`
+source and re-locking, then run with `--no-gpu`.
 
-**Consequence.** The lock resolves `torch 2.15.0+cpu` with no `nvidia-*`/`triton`/`cuda`
-packages. To re-enable GPU inference later, point `torch` back at PyPI (remove the
-`pytorch-cpu` index + the `torch` source) and re-lock. Also note this is exactly what
-made the old ADR-006 exclusion moot in principle — though the dev shell still excludes
-`mixup-node` because torch (CPU or GPU) isn't needed host-side.
+**Consequence.** The lock resolves `torch 2.15.0` + ~18 `nvidia-*` packages and `triton`
+(bigger, slower builds), and every container gets `device_requests=[DeviceRequest(gpu)]`
+unless `--no-gpu` is passed. The dev shell still excludes `mixup-node` because torch
+(CPU or GPU) isn't needed host-side.
 
 ---
 

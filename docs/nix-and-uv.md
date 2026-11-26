@@ -62,11 +62,10 @@ only needs the host-side tools.
 ## The lockfile
 
 `uv.lock` is regenerated inside the dev shell (`nix develop` → `uv lock`). It pins the
-**CPU** torch wheel (`torch 2.15.0+cpu` from the `pytorch-cpu` index) plus the workspace
-members — no `nvidia-*`/`triton` packages, for fast builds (see ADR-007). The `dev`
-dependency group (`ruff`, `pytest`) is declared in `pyproject.toml`; note uv2nix's
-`workspace.deps.all` does not surface it, which is why `ruff`/`pytest` are not in the
-dev shell (run them via `uvx` or a throwaway venv — see
+**CUDA** torch wheel (`torch 2.15.0` + `nvidia-*`/`triton`) plus the workspace members.
+The `dev` dependency group (`ruff`, `pytest`) is declared in `pyproject.toml`; note
+uv2nix's `workspace.deps.all` does not surface it, which is why `ruff`/`pytest` are not
+in the dev shell (run them via `uvx` or a throwaway venv — see
 [development.md](development.md)).
 
 ## Docker does *not* use Nix
