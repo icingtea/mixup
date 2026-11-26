@@ -87,10 +87,13 @@ class Node:
     # -- control loop ------------------------------------------------------
 
     def run(self) -> None:
-        """Entry point for the background control thread."""
+        """Entry point for the background control thread.
+
+        A leader only loads the dense model and then serves ``POST /generate`` — it does
+        not generate on its own. Generation starts only when a request is dispatched.
+        """
         if self.role is NodeRole.LEADER:
             self._become_leader()
-            self._generate(self.env.prompt, self.env.max_new_tokens)
         else:
             self._load_experts()
             self._watchdog()
@@ -240,5 +243,5 @@ class Node:
                 logger.info("%s: I win the election; promoting to leader", self.name)
                 self.role = NodeRole.LEADER
                 self._become_leader()
-                self._generate("", 0, resume=True)
+                # Don't generate here: the new leader waits for the next /generate request.
                 return

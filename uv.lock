@@ -647,12 +647,16 @@ source = { editable = "packages/mixup-repl" }
 dependencies = [
     { name = "httpx" },
     { name = "mixup-core" },
+    { name = "torch" },
+    { name = "transformers" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mixup-core", editable = "packages/mixup-core" },
+    { name = "torch", specifier = ">=2.14.1" },
+    { name = "transformers", specifier = ">=5.24.1" },
 ]
 
 [[package]]

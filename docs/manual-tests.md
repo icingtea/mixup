@@ -35,28 +35,30 @@ resume generation) is the **Phase 5 manual test**; Phase 3 only provides the dec
 
 ---
 
-## Phase 4 — leader failover (restart from prompt)
+## Phase 4 — leader failover
 
-Rebuild + start the cluster, then kill the leader mid-generation:
+Start the cluster, trigger a generation with the REPL, and kill the leader mid-request:
 
 ```bash
 docker rm -f container_1 container_2 container_3 container_4 container_5 2>/dev/null
 mixup-orchestrator
-docker logs -f container_2    # a follower, second terminal
-# once the central starts generating, in a third terminal:
+docker logs -f container_2                                  # a follower, second terminal
+mixup-repl "What is mixture of experts?" --max-new-tokens 100   # third terminal
+# while the REPL is still waiting, stop the leader:
 docker stop container_1
 ```
 
-**Expected:** `container_2` (the highest-priority follower) logs, then produces a
-completion (Phase 4 restarts from the prompt — no resume yet):
+**Expected:** `container_2` (the highest-priority follower) promotes:
 
 ```
 WARNING mixup_node.node: leader container_1 appears down; checking election
 INFO mixup_node.node: container_2: I win the election; promoting to leader
 INFO mixup_node.node: container_2: shed experts, becoming leader
 INFO mixup_node.node: container_2: dense model loaded; I am leader
-INFO mixup_node.infer: generated: ...
 ```
+
+The new leader does **not** auto-generate — it loads the dense model and waits for the
+next `/generate`. Re-run `mixup-repl "..."` to confirm it now serves requests.
 
 **If it fails:**
 - No `leader ... appears down` log → the watchdog isn't polling. Check `Node._watchdog`
@@ -67,35 +69,20 @@ INFO mixup_node.infer: generated: ...
 - Followers never reload the shed experts → the leader's `broadcast_routing` or the
   followers' `POST /routing` is broken.
 
-Known limitation removed: the new leader now broadcasts its identity to the other
-followers (`POST /leader`), so they poll *it* and can survive a *second* leader failure.
+The new leader broadcasts its identity to the other followers (`POST /leader`), so they
+poll *it* and can survive a *second* leader failure.
 
 ---
 
-## Phase 5 — leader failover with resume
+## Phase 5 — resume on leader failover (deferred)
 
-Same drill as Phase 4, but now the new leader resumes instead of restarting:
+Removed with on-demand generation: the leader no longer boot-generates, so there is no
+automatic "resume from checkpoint" on promotion. The promoted leader just waits for the
+next `/generate`, and a client re-sends its prompt after re-discovering the leader.
 
-```bash
-docker rm -f container_1 container_2 container_3 container_4 container_5 2>/dev/null
-mixup-orchestrator
-docker logs -f container_2
-# once the central starts generating, in another terminal:
-docker stop container_1
-```
-
-**Expected:** `container_2` logs `resuming from checkpoint: kv_seq=N, M tokens left`
-(not `generated:` from scratch), then produces a completion. The text should match an
-uninterrupted run — greedy decoding is deterministic; resume recomputes the prefix but
-loses ≤1 token's work.
-
-**If it fails:**
-- No `resuming from checkpoint` → the checkpoint wasn't written or the ledger volume isn't
-  mounted. Check `var/ledger/checkpoint.json` exists on the host once the leader starts.
-- Always `kv_seq=0` → the per-token writer isn't running. Check `_CheckpointProcessor` is
-  passed to `model.generate` and the ledger dir is writable (`var/ledger` is rw-mounted).
-- Wrong resume text → the `prompt_len`/`kv_seq` math is off. Check
-  `prompt_len = len(input_ids) - kv_seq`.
+The checkpoint write is retained (each `/generate` still records `input_ids` to
+`var/ledger`), so a REPL-driven resume (re-discover + resume the partial generation) can
+be added later if "minimal loss" matters again.
 
 ---
 

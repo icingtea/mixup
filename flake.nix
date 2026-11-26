@@ -50,6 +50,15 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           python = pkgs.python313;
+
+          # nvidia-cufile ships an RDMA helper (libcufile_rdma.so) that links
+          # against rdma-core. The upstream wheel leaves those libs unresolved,
+          # so autoPatchelf fails unless we supply rdma-core to the build.
+          cudaWheelFix = final: prev: {
+            nvidia-cufile = prev.nvidia-cufile.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.rdma-core ];
+            });
+          };
         in
         (pkgs.callPackage pyproject-nix.build.packages {
           inherit python;
@@ -58,6 +67,7 @@
             lib.composeManyExtensions [
               pyproject-build-systems.overlays.wheel
               overlay
+              cudaWheelFix
             ]
           )
       );
