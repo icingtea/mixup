@@ -51,12 +51,43 @@
           pkgs = nixpkgs.legacyPackages.${system};
           python = pkgs.python313;
 
-          # nvidia-cufile ships an RDMA helper (libcufile_rdma.so) that links
-          # against rdma-core. The upstream wheel leaves those libs unresolved,
-          # so autoPatchelf fails unless we supply rdma-core to the build.
+          # The CUDA wheels have inter-NVIDIA and RDMA/MPI/fabric dependencies
+          # (libcuda, libnvJitLink, libcusparse, libcublas, libmlx5, libmpi, ...)
+          # that aren't in each wheel's own build closure. They all resolve at
+          # runtime (torch loads the sibling NVIDIA libs itself, and we never use
+          # the RDMA/MPI transports), so tell autoPatchelf to ignore missing deps.
           cudaWheelFix = final: prev: {
+            torch = prev.torch.overrideAttrs (old: {
+              autoPatchelfIgnoreMissingDeps =
+                (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "*" ];
+            });
             nvidia-cufile = prev.nvidia-cufile.overrideAttrs (old: {
-              buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.rdma-core ];
+              autoPatchelfIgnoreMissingDeps =
+                (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "*" ];
+            });
+            nvidia-nvshmem-cu13 = prev.nvidia-nvshmem-cu13.overrideAttrs (old: {
+              autoPatchelfIgnoreMissingDeps =
+                (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "*" ];
+            });
+            nvidia-cusparse = prev.nvidia-cusparse.overrideAttrs (old: {
+              autoPatchelfIgnoreMissingDeps =
+                (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "*" ];
+            });
+            nvidia-cusolver = prev.nvidia-cusolver.overrideAttrs (old: {
+              autoPatchelfIgnoreMissingDeps =
+                (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "*" ];
+            });
+            nvidia-cudnn-cu13 = prev.nvidia-cudnn-cu13.overrideAttrs (old: {
+              autoPatchelfIgnoreMissingDeps =
+                (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "*" ];
+            });
+            nvidia-cusparselt-cu13 = prev.nvidia-cusparselt-cu13.overrideAttrs (old: {
+              autoPatchelfIgnoreMissingDeps =
+                (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "*" ];
+            });
+            nvidia-nccl-cu13 = prev.nvidia-nccl-cu13.overrideAttrs (old: {
+              autoPatchelfIgnoreMissingDeps =
+                (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [ "*" ];
             });
           };
         in
