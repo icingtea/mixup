@@ -85,10 +85,12 @@ class Dispatcher:
             )
             for container in chosen
         ]
-        total = torch.zeros_like(hidden_states)
+        # Expert replies are deserialized on CPU (the wire is CPU); accumulate there and
+        # move the sum back onto the model's device at the end.
+        total = torch.zeros_like(hidden_states, device="cpu")
         for job in jobs:
             total += job.result()
-        return total
+        return total.to(hidden_states.device)
 
     def _send(
         self,
