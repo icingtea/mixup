@@ -135,3 +135,19 @@ note. No phase merges on "works on my laptop".
   tables and updates the view via `apply_routing`.
 - Validated end-to-end: post-replan generation is correct and *faster* than pre-replan
   (the leader's GPU now serves the hot experts instead of the CPU nodes).
+
+## Phase 4 (dynamic placement + replica failover) — in progress
+
+- **Replicas**: `RoutingEntry.backup` + `replica.py` (`plan_backups`, `promote_backups`,
+  `failover_with_backups`). Each expert gets a backup on a different device; on primary
+  failure the backup is promoted (no re-sharding), and only experts with a dead/absent
+  backup fall back to least-loaded re-placement. Pure + tested (including double failure).
+- **Periodic re-plan**: the leader re-plans every `REPLAN_INTERVAL_TOKENS` (200) observed
+  tokens, not just once, so placement adapts as activation stats drift. Churn is amortized
+  in the objective, so re-planning only moves experts when the latency gain outweighs the
+  reload cost.
+- **Fixed: leader's own store not updated on failover.** `_on_expert_failure` relied on the
+  loopback `/routing` broadcast, but that carries the same epoch the view already holds, so
+  the staleness guard ignored it. Now updates the leader's store/dispatcher directly.
+- Validated: killing an expert promotes its backups (8 → 13 experts on the leader) with
+  full coverage (32) and correct generation.
