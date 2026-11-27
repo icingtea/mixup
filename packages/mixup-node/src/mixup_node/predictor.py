@@ -68,7 +68,7 @@ class LRPredictor:
 
     def to_state(self, version: int) -> PredictorState:
         buf = io.BytesIO()
-        torch.save(self.W, buf)
+        torch.save(self.W.cpu(), buf)
         return PredictorState(
             version=version,
             kind=self.kind,
@@ -80,7 +80,9 @@ class LRPredictor:
     @classmethod
     def from_state(cls, state: PredictorState) -> "LRPredictor":
         model = cls(state.feature_dim, state.num_experts)
-        model.W = torch.load(io.BytesIO(base64.b64decode(state.weights_b64)))
+        model.W = torch.load(
+            io.BytesIO(base64.b64decode(state.weights_b64)), map_location="cpu"
+        )
         return model
 
 
@@ -135,7 +137,10 @@ class MLPPredictor:
 
     def to_state(self, version: int) -> PredictorState:
         buf = io.BytesIO()
-        torch.save({"W1": self.W1, "b1": self.b1, "W2": self.W2, "b2": self.b2}, buf)
+        torch.save(
+            {"W1": self.W1.cpu(), "b1": self.b1.cpu(), "W2": self.W2.cpu(), "b2": self.b2.cpu()},
+            buf,
+        )
         return PredictorState(
             version=version,
             kind=self.kind,
@@ -148,6 +153,8 @@ class MLPPredictor:
     @classmethod
     def from_state(cls, state: PredictorState) -> "MLPPredictor":
         model = cls(state.feature_dim, state.num_experts, state.hidden_dim or 64)
-        d = torch.load(io.BytesIO(base64.b64decode(state.weights_b64)))
+        d = torch.load(
+            io.BytesIO(base64.b64decode(state.weights_b64)), map_location="cpu"
+        )
         model.W1, model.b1, model.W2, model.b2 = d["W1"], d["b1"], d["W2"], d["b2"]
         return model
