@@ -67,6 +67,21 @@
 
 <div class="app">
 	<header>
+		<svg
+			class="brand-icon"
+			width="18"
+			height="18"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		>
+			<path d="M12 12 4.207 4.207A.707.707 0 0 1 4.707 3h14.586a.707.707 0 0 1 .5 1.207z"></path>
+			<path d="M12 12v10"></path>
+			<path d="M7 22h10"></path>
+		</svg>
 		<span class="brand">mixup</span>
 		<span class="muted">distributed MoE inference</span>
 		<span class="spacer"></span>
@@ -134,6 +149,11 @@
 	header .brand {
 		font-weight: 700;
 		color: var(--accent);
+	}
+
+	header .brand-icon {
+		color: var(--accent);
+		flex-shrink: 0;
 	}
 
 	.spacer {

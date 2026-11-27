@@ -1,20 +1,6 @@
 <script lang="ts">
-	import type { GenerateResult, RoutingAssignment } from '$lib/types';
-
-	interface ExpertUsage {
-		top: { e: number; c: number }[];
-		distinct: number;
-		total: number;
-		max: number;
-	}
-
-	interface Msg {
-		role: 'user' | 'assistant';
-		text: string;
-		meta?: string;
-		usage?: ExpertUsage;
-		routing?: Record<string, RoutingAssignment>;
-	}
+	import type { GenerateResult } from '$lib/types';
+	import { chat, computeUsage, nodeOf } from '$lib/chat.svelte';
 
 	interface Props {
 		onSend: (prompt: string) => Promise<GenerateResult | null>;
@@ -22,32 +8,18 @@
 
 	let { onSend }: Props = $props();
 
-	let messages = $state<Msg[]>([]);
-	let input = $state('');
-	let busy = $state(false);
-
-	function computeUsage(counts: number[] | undefined): ExpertUsage | undefined {
-		if (!counts || counts.length === 0) return undefined;
-		const total = counts.reduce((a, c) => a + c, 0);
-		if (total === 0) return undefined;
-		const distinct = counts.filter((c) => c > 0).length;
-		const max = Math.max(1, ...counts);
-		const top = counts.map((c, e) => ({ e, c })).sort((a, b) => b.c - a.c);
-		return { top, distinct, total, max };
-	}
-
 	async function submit() {
-		const prompt = input.trim();
-		if (!prompt || busy) return;
-		input = '';
-		messages = [...messages, { role: 'user', text: prompt }];
-		busy = true;
+		const prompt = chat.input.trim();
+		if (!prompt || chat.busy) return;
+		chat.input = '';
+		chat.messages = [...chat.messages, { role: 'user', text: prompt }];
+		chat.busy = true;
 		try {
 			const r = await onSend(prompt);
 			if (r) {
 				const tokS = r.tokens / Math.max(r.elapsed_seconds, 1e-9);
-				messages = [
-					...messages,
+				chat.messages = [
+					...chat.messages,
 					{
 						role: 'assistant',
 						text: r.text,
@@ -57,26 +29,22 @@
 					}
 				];
 			} else {
-				messages = [...messages, { role: 'assistant', text: '(no leader reachable)' }];
+				chat.messages = [...chat.messages, { role: 'assistant', text: '(no leader reachable)' }];
 			}
 		} catch (e) {
-			messages = [
-				...messages,
+			chat.messages = [
+				...chat.messages,
 				{ role: 'assistant', text: `error: ${e instanceof Error ? e.message : String(e)}` }
 			];
 		} finally {
-			busy = false;
+			chat.busy = false;
 		}
-	}
-
-	function nodeOf(routing: Msg['routing'], expert: number): string {
-		return routing?.[expert]?.node ?? '—';
 	}
 </script>
 
 <div class="chat">
 	<div class="messages scroll">
-		{#each messages as m, i (i)}
+		{#each chat.messages as m, i (i)}
 			<div class="msg {m.role}">
 				<span class="role">{m.role === 'user' ? 'you' : 'assistant'}</span>
 				<p>{m.text}</p>
@@ -100,7 +68,7 @@
 				{/if}
 			</div>
 		{/each}
-		{#if busy}
+		{#if chat.busy}
 			<div class="msg assistant">
 				<span class="role">assistant</span>
 				<p class="muted">…generating</p>
@@ -115,8 +83,8 @@
 			submit();
 		}}
 	>
-		<input bind:value={input} placeholder="Send a prompt…" disabled={busy} />
-		<button type="submit" class="primary" disabled={busy}>send</button>
+		<input bind:value={chat.input} placeholder="Send a prompt…" disabled={chat.busy} />
+		<button type="submit" class="primary" disabled={chat.busy}>send</button>
 	</form>
 </div>
 
