@@ -74,6 +74,22 @@ class TieredExpertStore:
                 self._drop(key)
         self.owned = new
 
+    def set_routing(self, table) -> None:
+        """Adopt a routing table (drop-in for ``ExpertGroup.set_routing``).
+
+        Extracts this node's owned experts from the table and reloads only the changed set.
+        """
+        from mixup_core.runtime import RoutingTable
+
+        if not isinstance(table, RoutingTable):
+            table = RoutingTable.model_validate(table)
+        owned = sorted(
+            e for e, entry in table.assignment.items() if entry.node_id == self.name
+        )
+        if owned == sorted(self.owned):
+            return
+        self.set_ownership(owned)
+
     def _open(self) -> safe_open:
         if self._file is None:
             self._file = safe_open(self.model_file, framework="pt")
