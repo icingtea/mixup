@@ -46,6 +46,18 @@ class LRPredictor:
         self.num_experts = num_experts
         self.lr = lr
         self.W = torch.zeros(num_experts, feature_dim)  # [num_experts, feature_dim]
+        self.samples = 0
+        self.top1_hits = 0
+        self.top3_hits = 0
+
+    def record_accuracy(self, probs: Tensor, actual: list[int]) -> None:
+        """Track top-1/top-3 accuracy against the actual next-layer top-k."""
+        self.samples += 1
+        ranked = sorted(range(probs.shape[0]), key=lambda e: -probs[e].item())
+        if ranked[0] in actual:
+            self.top1_hits += 1
+        if any(e in actual for e in ranked[:3]):
+            self.top3_hits += 1
 
     def _sync_device(self, device) -> None:
         if self.W.device != device:
@@ -102,6 +114,17 @@ class MLPPredictor:
         self.b1 = torch.zeros(hidden_dim)
         self.W2 = torch.randn(num_experts, hidden_dim) * 0.1
         self.b2 = torch.zeros(num_experts)
+        self.samples = 0
+        self.top1_hits = 0
+        self.top3_hits = 0
+
+    def record_accuracy(self, probs: Tensor, actual: list[int]) -> None:
+        self.samples += 1
+        ranked = sorted(range(probs.shape[0]), key=lambda e: -probs[e].item())
+        if ranked[0] in actual:
+            self.top1_hits += 1
+        if any(e in actual for e in ranked[:3]):
+            self.top3_hits += 1
 
     def _sync_device(self, device) -> None:
         if self.W1.device != device:

@@ -99,6 +99,8 @@ class Dispatcher:
 
                 x = features(self._prev_hidden, self._prev_experts, self.num_experts)
                 y = _labels(cur_experts, self.num_experts)
+                probs = self.predictor.predict(x)
+                self.predictor.record_accuracy(probs, cur_experts)
                 self.predictor.update(x, y)
             self._prev_hidden = hidden_states[0].detach()
             self._prev_experts = cur_experts

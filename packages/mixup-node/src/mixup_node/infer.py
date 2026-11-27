@@ -69,6 +69,14 @@ def build_app(node: Node) -> FastAPI:
         node.store_predictor(await request.json())
         return {"ok": True}
 
+    @app.get("/predictor")
+    async def predictor_info() -> dict:
+        return node.predictor_info()
+
+    @app.get("/experts")
+    async def expert_stats() -> dict:
+        return node.expert_stats()
+
     @app.post("/leader")
     async def leader_announce(request: Request) -> dict:
         data = await request.json()

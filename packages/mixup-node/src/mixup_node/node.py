@@ -298,6 +298,29 @@ class Node:
         elif state.kind == "mlp":
             self.predictor = MLPPredictor.from_state(state)
 
+    def predictor_info(self) -> dict:
+        """Live predictor state + accuracy for the observability UI."""
+        if self.predictor is None:
+            return {"kind": "none", "version": 0, "samples": 0, "top1_hits": 0, "top3_hits": 0}
+        return {
+            "kind": getattr(self.predictor, "kind", "?"),
+            "version": self._predictor_version,
+            "samples": getattr(self.predictor, "samples", 0),
+            "top1_hits": getattr(self.predictor, "top1_hits", 0),
+            "top3_hits": getattr(self.predictor, "top3_hits", 0),
+        }
+
+    def expert_stats(self) -> dict:
+        """Per-expert activation counts (summed over layers) for the observability UI."""
+        if self._trace is None:
+            return {"counts": [], "num_experts": 0}
+        stats = self._trace.snapshot()
+        counts = [
+            sum(stats.counts[ly][e] for ly in range(stats.num_layers))
+            for e in range(stats.num_experts)
+        ]
+        return {"counts": counts, "num_experts": stats.num_experts}
+
     def _on_expert_failure(self, node: str) -> RoutingTable:
         def _fail(v: ClusterView) -> ClusterView:
             v = failover_with_backups(v, node, by_node=self.name)
