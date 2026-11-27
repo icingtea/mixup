@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 from .failure_detection import Action, FailureDetector
 from .gossip import Ack, Alive, Dead, GossipMsg, Ping, PingReq, Suspect, apply_gossip
-from .runtime import ClusterView, MemberState
+from .runtime import ClusterView, MemberState, RoutingTable
 from .types import MemberStatus, NodeId
 
 
@@ -47,6 +47,23 @@ class GossipEngine:
         with self._lock:
             self.view = fn(self.view)
             return self.view
+
+    def adopt_routing(
+        self, table: RoutingTable, on_adopted: Callable[[RoutingTable], None] | None = None
+    ) -> bool:
+        """Adopt ``table`` as the routing table if it is newer, atomically.
+
+        ``on_adopted`` runs *under the lock* after the table is adopted, so side effects
+        that must stay consistent with the view (e.g. updating the dispatcher's table) can
+        be done without racing another adoption. Returns ``True`` if adopted.
+        """
+        with self._lock:
+            if self.view.routing is not None and not table.is_newer_than(self.view.routing):
+                return False
+            self.view = ClusterView(members=self.view.members, routing=table)
+            if on_adopted is not None:
+                on_adopted(table)
+            return True
 
     # -- helpers -----------------------------------------------------------
 

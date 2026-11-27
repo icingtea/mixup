@@ -28,7 +28,7 @@ from mixup_core.gossip_engine import GossipEngine
 from mixup_core.kvledger import KvState, decode_kv_state, encode_kv_state
 from mixup_core.planner import plan_routing
 from mixup_core.replica import failover_with_backups, plan_backups
-from mixup_core.runtime import ClusterView, RoutingTable, apply_routing
+from mixup_core.runtime import ClusterView, RoutingTable
 from mixup_core.scheduler import (
     LeastLoadedPolicy,
     balance_experts,
@@ -246,16 +246,42 @@ class Node:
         return ExpertGroup(self.name, self.model_config, MODEL_FILE, table)
 
     def _on_expert_failure(self, node: str) -> RoutingTable:
-        view = self.engine.mutate(lambda v: failover_with_backups(v, node, by_node=self.name))
+        def _fail(v: ClusterView) -> ClusterView:
+            v = failover_with_backups(v, node, by_node=self.name)
+            # Update the dispatcher's table atomically with the view (under the lock), so
+            # it can never diverge from the routing the view just adopted.
+            if self.dispatcher is not None:
+                self.dispatcher.set_table(v.routing)
+            return v
+
+        view = self.engine.mutate(_fail)
         new_table = view.routing
         if new_table is not None:
-            # Update our own expert store directly (the loopback /routing broadcast is
-            # ignored as stale since it carries the same epoch we already hold).
             if self.expert_group is not None:
                 self.expert_group.set_routing(new_table)
             broadcast_routing(view, self.name)
         assert new_table is not None
         return new_table
+
+    def adopt_routing(self, table: RoutingTable) -> bool:
+        """Adopt a routing table and propagate it to the dispatcher + expert group.
+
+        The view and the dispatcher's table are updated *atomically* under the engine lock
+        (so the dispatcher can never diverge from the view), then the expert group is
+        reloaded and the table broadcast. Returns ``True`` if the table was adopted (it was
+        newer than the view's current routing).
+        """
+
+        def _on_adopted(t: RoutingTable) -> None:
+            if self.dispatcher is not None:
+                self.dispatcher.set_table(t)
+
+        if not self.engine.adopt_routing(table, on_adopted=_on_adopted):
+            return False
+        if self.expert_group is not None:
+            self.expert_group.set_routing(table)
+        broadcast_routing(self.engine.view, self.name)
+        return True
 
     def replan(self) -> RoutingTable | None:
         """Recompute expert placement from observed activations + profiles (Phase 2).
@@ -306,21 +332,11 @@ class Node:
                 _assignment_summary(new_table),
             )
             return None
-        # Adopt atomically under the engine lock, but only if it is still newer than the
-        # view (a concurrent failover/rejoin may have already advanced the epoch).
-        new_view = self.engine.mutate(lambda v: apply_routing(v, new_table))
-        if new_view.routing is None or new_view.routing.epoch != new_table.epoch:
-            logger.info(
-                "%s: replan result stale (view now epoch %s), skipped",
-                self.name,
-                new_view.routing.epoch if new_view.routing else None,
-            )
+        # Adopt atomically (view + dispatcher under the engine lock), skipping if a
+        # concurrent failover/rejoin has already advanced the epoch.
+        if not self.adopt_routing(new_table):
+            logger.info("%s: replan result stale, skipped", self.name)
             return None
-        if self.dispatcher is not None:
-            self.dispatcher.set_table(new_table)
-        if self.expert_group is not None:
-            self.expert_group.set_routing(new_table)
-        broadcast_routing(new_view, self.name)
         logger.info(
             "%s: replanned from %d observed tokens -> routing epoch %d (%s)",
             self.name,

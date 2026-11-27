@@ -20,7 +20,7 @@ from mixup_core.constants import EXPERT_PORT, INTERNAL_PORT, MODEL_DIR
 from mixup_core.election import leader_projection
 from mixup_core.env import load_node_env
 from mixup_core.logging_config import configure_logging
-from mixup_core.runtime import ClusterView, RoutingTable, apply_routing
+from mixup_core.runtime import ClusterView, RoutingTable
 from mixup_core.topology import cluster_view_from_config, validate_partition
 from mixup_core.types import GenerateRequest, GenerateResponse
 
@@ -67,15 +67,11 @@ def build_app(node: Node) -> FastAPI:
     @app.post("/routing")
     async def routing(request: Request) -> dict:
         table = RoutingTable.model_validate(await request.json())
-        current = node.engine.view.routing
-        if current is not None and not table.is_newer_than(current):
-            logger.info(
-                "routing: ignoring stale table epoch=%d (have %d)",
-                table.epoch,
-                current.epoch,
-            )
+        # Adopt atomically: the view is updated under the engine lock, so a stale table
+        # (older epoch) can never overwrite a newer one.
+        if not node.engine.adopt_routing(table):
+            logger.info("routing: ignoring stale table epoch=%d", table.epoch)
             return {"ok": True, "stale": True}
-        node.engine.mutate(lambda v: apply_routing(v, table))
         if node.expert_group is not None:
             logger.info("routing: received table epoch=%d", table.epoch)
             node.expert_group.set_routing(table)
