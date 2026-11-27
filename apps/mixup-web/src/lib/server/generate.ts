@@ -36,7 +36,7 @@ async function fetchExpertCounts(url: string): Promise<number[]> {
 
 export async function generate(prompt: string, maxNewTokens: number): Promise<GenerateResult> {
 	const urls = nodeUrls(loadStartup());
-	for (let attempt = 0; attempt < 10; attempt++) {
+	for (let attempt = 0; attempt < 30; attempt++) {
 		const leader = await discoverLeader();
 		if (!leader) {
 			await sleep(2000);

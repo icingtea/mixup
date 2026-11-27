@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 # otherwise trigger an unnecessary failover.
 GOSSIP_INTERVAL = 0.5
 PING_TIMEOUT = 5.0
-SUSPECT_TIMEOUT = 30.0
+SUSPECT_TIMEOUT = 10.0
 INDIRECT_K = 2
 
 DEAD_REPROBE_INTERVAL = 5.0
@@ -85,25 +85,32 @@ def broadcast_routing(view: ClusterView, by_node: str) -> None:
     """Push the current routing table to every expert node (so they load new experts).
 
     Iterates the routing table's expert nodes (not the membership roster), so a node that
-    was rebalanced away or died is not contacted. Retries each node a few times: a
-    rejoining node's server may not be listening yet, so a single fire-and-forget push
-    races its boot.
+    was rebalanced away or died is not contacted. Fire-and-forget on a background thread so
+    a slow or dead peer never stalls the caller (the gossip loop or the /join handler); the
+    nodes reload asynchronously via /routing anyway.
     """
     table = view.routing
     if table is None:
         return
     payload = table.model_dump()
     nodes = sorted({entry.node_id for entry in table.assignment.values()})
+    threading.Thread(
+        target=_broadcast_routing, args=(payload, nodes, table.epoch), daemon=True
+    ).start()
+
+
+def _broadcast_routing(payload: dict, nodes: list[str], epoch: int) -> None:
+    """Best-effort push of ``payload`` to ``nodes`` (2 short retries each)."""
     for node_id in nodes:
         sent = False
-        for _ in range(5):
+        for _ in range(2):
             try:
-                requests.post(f"{address(node_id)}/routing", json=payload, timeout=5)
-                logger.info("broadcast: sent routing epoch %d to %s", table.epoch, node_id)
+                requests.post(f"{address(node_id)}/routing", json=payload, timeout=2)
+                logger.info("broadcast: sent routing epoch %d to %s", epoch, node_id)
                 sent = True
                 break
             except RequestException:
-                time.sleep(1)
+                time.sleep(0.5)
         if not sent:
             logger.warning("broadcast: could not reach %s during rebalance", node_id)
 

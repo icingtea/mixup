@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
         "--timeout", type=float, default=2.0, help="per-node discovery timeout (seconds)"
     )
     parser.add_argument(
-        "--retries", type=int, default=10, help="generation attempts across failovers"
+        "--retries", type=int, default=30, help="generation attempts across failovers"
     )
     parser.add_argument(
         "--backoff", type=float, default=2.0, help="seconds to wait between attempts"

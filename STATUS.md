@@ -94,7 +94,9 @@ Docker logs: `docker logs container_1` (leader) etc. Metrics ledger: `var/ledger
   modules (the test venv is torch-free).
 - `lab_config.json` is the emulated-lab config (`{startup, profiles, specs, profile_mode}`);
   `load_startup_config()` accepts both it and the flat `startup_config.json`.
-- Failover is slow by design (~15s detection from 5s/10s gossip timeouts + ~5s dense load).
+- Failover is intentionally conservative (~20s: 5s ping + 5s indirect probe + 10s suspect
+  timeout, then the dense-model load). The clients (REPL/web) retry with backoff for long
+  enough to absorb it; a leader killed mid-generation resumes from the warm KV snapshot.
 - Core models are strict (`mixup_core.base.StrictModel`): no implicit type coercion, except
   `StrEnum` fields (declared `Field(strict=False)`) because JSON carries enum values as
   strings, and `RoutingTable.assignment` keys (coerced from string by a validator).
