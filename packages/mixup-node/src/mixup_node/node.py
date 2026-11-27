@@ -357,10 +357,13 @@ class Node:
 
         self.engine.mutate(_mark_alive)
 
-        if self._trace is not None and self._trace.tokens >= REPLAN_MIN_TOKENS:
-            if self.replan() is not None:
-                logger.info("%s: rebalanced after %s rejoined (via replan)", self.name, node_id)
-                return
+        if (
+            self._trace is not None
+            and self._trace.tokens >= REPLAN_MIN_TOKENS
+            and self.replan() is not None
+        ):
+            logger.info("%s: rebalanced after %s rejoined (via replan)", self.name, node_id)
+            return
 
         def _rebalance(v: ClusterView) -> ClusterView:
             if v.routing is not None:
