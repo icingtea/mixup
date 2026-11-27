@@ -84,6 +84,12 @@ class StartupConfig(StrictModel):
     max_new_tokens: int = 500
     """Default generation length when a client doesn't specify one."""
 
+    temperature: float = 0.7
+    """Sampling temperature (0 = greedy)."""
+
+    top_k: int = 50
+    """Top-k sampling cutoff (0/1 = greedy)."""
+
     @field_validator("experts")
     @classmethod
     def _experts_unique(cls, value: ExpertAlloc) -> ExpertAlloc:

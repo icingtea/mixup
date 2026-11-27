@@ -72,9 +72,20 @@ REPLAN_MIN_TOKENS = 50
 REPLAN_INTERVAL_TOKENS = 200
 """Re-evaluate placement every this many observed tokens (after the first re-plan)."""
 
-REPETITION_PENALTY = 1.2
-"""Penalty applied to already-generated tokens before the greedy argmax. Deterministic;
-prevents the greedy decoder from degenerating into a single-token loop on long generations."""
+
+def sample_token(logits: torch.Tensor, temperature: float, top_k: int) -> torch.Tensor:
+    """Sample the next token via top-k sampling (greedy when temperature <= 0 or top_k <= 1).
+
+    Returns a 1-D ``[batch]`` tensor, matching ``argmax``'s shape.
+    """
+    if temperature <= 0.0 or top_k <= 1:
+        return logits.argmax(dim=-1)
+    scaled = logits / temperature
+    k = min(top_k, scaled.shape[-1])
+    topk_vals, topk_idx = torch.topk(scaled, k, dim=-1)
+    probs = torch.softmax(topk_vals, dim=-1)
+    sampled = torch.multinomial(probs, 1)  # [batch, 1]
+    return topk_idx.gather(-1, sampled).squeeze(-1)  # [batch]
 
 
 def _assignment_summary(table: RoutingTable) -> dict[str, int]:
@@ -655,12 +666,14 @@ class Node:
         self.dispatcher.metrics = metrics
 
         eos = self.tokenizer.eos_token_id
+        temperature = getattr(self.env.config, "temperature", 0.7)
+        top_k = getattr(self.env.config, "top_k", 50)
         start = time.perf_counter()
         with torch.no_grad():
             if past is None:
                 out = self.model(input_ids=prompt_ids, cache=None, use_cache=True)
                 past = out.cache
-                nxt = out.logits[:, -1, :].argmax(dim=-1)
+                nxt = sample_token(out.logits[:, -1, :], temperature, top_k)
             for _ in range(remaining):
                 if nxt.item() == eos:
                     break
@@ -684,15 +697,7 @@ class Node:
                     self._commit.record_ack(self._commit.log.next_index - 1, self.name)
                 out = self.model(input_ids=nxt.unsqueeze(0), cache=past, use_cache=True)
                 past = out.cache
-                logits = out.logits[:, -1, :]
-                # Repetition penalty: discourage re-emitting an already-generated token so
-                # greedy decoding can't lock into a single-token loop on long generations.
-                for prev in generated_ids:
-                    score = logits[0, prev]
-                    logits[0, prev] = (
-                        score * REPETITION_PENALTY if score < 0 else score / REPETITION_PENALTY
-                    )
-                nxt = logits.argmax(dim=-1)
+                nxt = sample_token(out.logits[:, -1, :], temperature, top_k)
 
         elapsed = time.perf_counter() - start
         generated = len(generated_ids)
