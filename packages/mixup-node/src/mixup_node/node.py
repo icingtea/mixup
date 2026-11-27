@@ -129,6 +129,7 @@ class Node:
         self.kv_sync_every = env.config.kv_sync_every
         self._peer_idx = 0  # round-robin cursor for gossip peer selection
         self._trace: TraceBuffer | None = None  # leader's activation stats (Phase 2)
+        self._replanned_once = False  # auto-re-plan after the first warm generation
 
     # -- control loop ------------------------------------------------------
 
@@ -451,6 +452,17 @@ class Node:
         )
         text = self.tokenizer.decode(generated_ids)
         logger.info("generated: %s", text)
+
+        # Phase 2: after our first warm generation, re-place experts resource-awarely
+        # (once). Subsequent re-plans are driven by /replan or the coarse loop (Phase 4).
+        if (
+            not self._replanned_once
+            and self._trace is not None
+            and self._trace.tokens >= REPLAN_MIN_TOKENS
+        ):
+            self._replanned_once = True
+            self.replan()
+
         return text, generated, elapsed, dense, dispatch
 
     # -- warm KV-cache sharing --------------------------------------------
