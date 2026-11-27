@@ -14,6 +14,7 @@ from collections.abc import Callable
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 from transformers import GraniteMoeConfig
 
 from mixup_core.constants import EXPERT_PORT, INTERNAL_PORT, MODEL_DIR
@@ -93,7 +94,9 @@ def build_app(node: Node) -> FastAPI:
             return {"ok": True, "stale": True}
         if node.expert_group is not None:
             logger.info("routing: received table epoch=%d", table.epoch)
-            node.expert_group.set_routing(table)
+            # The expert reload is GIL-heavy and would block the event loop (and thus the
+            # /gossip ping acks) if run here; offload it so failure detection stays live.
+            await run_in_threadpool(node.expert_group.set_routing, table)
         return {"ok": True}
 
     @app.get("/routing")
@@ -114,14 +117,15 @@ def build_app(node: Node) -> FastAPI:
         if node.model is None:
             raise HTTPException(status_code=503, detail="not the leader")
         data = await request.json()
-        node.rejoin(data["node_id"], data.get("incarnation"))
+        # rejoin rebalances + reloads experts (GIL-heavy); offload so /gossip stays live.
+        await run_in_threadpool(node.rejoin, data["node_id"], data.get("incarnation"))
         return {"ok": True}
 
     @app.post("/replan")
     async def replan() -> dict:
         if node.model is None:
             raise HTTPException(status_code=503, detail="not the leader")
-        table = node.replan()
+        table = await run_in_threadpool(node.replan)
         return {"ok": True, "epoch": table.epoch if table else None}
 
     @app.get("/stats")
