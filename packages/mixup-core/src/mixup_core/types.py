@@ -6,7 +6,7 @@ nodes depend on, so it stays free of torch/docker/fastapi: pure pydantic.
 
 from enum import StrEnum
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, field_validator
 
 ContainerName = str
 """A node's name, which is also its hostname on the Docker network, e.g. "container_2"."""
@@ -86,13 +86,6 @@ class StartupConfig(BaseModel):
                     raise ValueError(f"expert {expert} is assigned to more than one node")
                 seen.add(expert)
         return value
-
-    @model_validator(mode="after")
-    def _leader_not_expert(self) -> "StartupConfig":
-        """The leader holds everything except the experts, so it holds none."""
-        if self.initial_leader in self.experts:
-            raise ValueError(f"leader {self.initial_leader!r} is also an expert node")
-        return self
 
     def initial_role(self, name: ContainerName) -> NodeRole:
         """The role `name` starts in."""

@@ -10,6 +10,7 @@ import os
 
 from pydantic import BaseModel
 
+from .devices import DeviceProfile, ProfileMode
 from .types import ContainerName, StartupConfig
 
 NODE_ENV_VAR = "MIXUP_NODE_ENV"
@@ -33,6 +34,12 @@ class NodeEnv(BaseModel):
 
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS
     """How many tokens the central node generates."""
+
+    profiles: dict[ContainerName, DeviceProfile] = {}
+    """Per-node device profiles (the perception layer for placement)."""
+
+    profile_mode: ProfileMode = ProfileMode.HYBRID
+    """How placement weighs the declared profile vs online measurements."""
 
 
 def load_node_env() -> NodeEnv:

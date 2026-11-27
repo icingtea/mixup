@@ -34,3 +34,16 @@ def test_node_env_defaults() -> None:
     env = NodeEnv(container_name="container_1", config=_config())
     assert env.prompt == "What is mixture of experts?"
     assert env.max_new_tokens == 50
+    assert env.profiles == {}
+    assert env.profile_mode.value == "hybrid"
+
+
+def test_node_env_carries_profiles() -> None:
+    from mixup_core.devices import DeviceProfile
+
+    profiles = {
+        "container_1": DeviceProfile(node_id="container_1", execution="gpu"),
+        "container_2": DeviceProfile(node_id="container_2", execution="cpu"),
+    }
+    env = NodeEnv(container_name="container_1", config=_config(), profiles=profiles)
+    assert env.profiles["container_2"].execution.value == "cpu"

@@ -21,6 +21,19 @@ class ExecutionType(StrEnum):
     CPU = "cpu"
 
 
+class ProfileMode(StrEnum):
+    """How placement decisions treat the (static) profile vs (dynamic) measurements.
+
+    - ``configured``: trust the profile's declared numbers (lab emulation; deterministic).
+    - ``measured``: trust online EWMA estimates (real deployment; adapts).
+    - ``hybrid``: seed from the profile, correct online within bounded drift.
+    """
+
+    CONFIGURED = "configured"
+    MEASURED = "measured"
+    HYBRID = "hybrid"
+
+
 class DeviceProfile(BaseModel):
     """Static, per-device capabilities and measured latencies.
 

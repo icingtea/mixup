@@ -30,9 +30,11 @@ def test_duplicate_expert_rejected() -> None:
         _config(experts={"container_2": [0, 1], "container_3": [1, 2]})
 
 
-def test_leader_cannot_hold_experts() -> None:
-    with pytest.raises(ValidationError):
-        _config(experts={"container_1": [0, 1], "container_2": [2, 3]})
+def test_leader_may_hold_experts() -> None:
+    # Leader-as-owner (Phase 1): the initial leader may also serve experts.
+    config = _config(experts={"container_1": [0, 1], "container_2": [2, 3]})
+    assert config.initial_role("container_1") is NodeRole.LEADER
+    assert config.experts["container_1"] == [0, 1]
 
 
 def test_load_startup_config(tmp_path: Path) -> None:
