@@ -1,25 +1,27 @@
 <script lang="ts">
 	import type { GenerateResult } from '$lib/types';
-	import { chat, computeUsage, nodeOf } from '$lib/chat.svelte';
+	import type { ChatState } from '$lib/chat.svelte';
+	import { computeUsage, nodeOf } from '$lib/chat.svelte';
 
 	interface Props {
 		onSend: (prompt: string) => Promise<GenerateResult | null>;
+		store: ChatState;
 	}
 
-	let { onSend }: Props = $props();
+	let { onSend, store }: Props = $props();
 
 	async function submit() {
-		const prompt = chat.input.trim();
-		if (!prompt || chat.busy) return;
-		chat.input = '';
-		chat.messages = [...chat.messages, { role: 'user', text: prompt }];
-		chat.busy = true;
+		const prompt = store.input.trim();
+		if (!prompt || store.busy) return;
+		store.input = '';
+		store.messages = [...store.messages, { role: 'user', text: prompt }];
+		store.busy = true;
 		try {
 			const r = await onSend(prompt);
 			if (r) {
 				const tokS = r.tokens / Math.max(r.elapsed_seconds, 1e-9);
-				chat.messages = [
-					...chat.messages,
+				store.messages = [
+					...store.messages,
 					{
 						role: 'assistant',
 						text: r.text,
@@ -29,22 +31,22 @@
 					}
 				];
 			} else {
-				chat.messages = [...chat.messages, { role: 'assistant', text: '(no leader reachable)' }];
+				store.messages = [...store.messages, { role: 'assistant', text: '(no leader reachable)' }];
 			}
 		} catch (e) {
-			chat.messages = [
-				...chat.messages,
+			store.messages = [
+				...store.messages,
 				{ role: 'assistant', text: `error: ${e instanceof Error ? e.message : String(e)}` }
 			];
 		} finally {
-			chat.busy = false;
+			store.busy = false;
 		}
 	}
 </script>
 
 <div class="chat">
 	<div class="messages scroll">
-		{#each chat.messages as m, i (i)}
+		{#each store.messages as m, i (i)}
 			<div class="msg {m.role}">
 				<span class="role">{m.role === 'user' ? 'you' : 'assistant'}</span>
 				<p>{m.text}</p>
@@ -68,7 +70,7 @@
 				{/if}
 			</div>
 		{/each}
-		{#if chat.busy}
+		{#if store.busy}
 			<div class="msg assistant">
 				<span class="role">assistant</span>
 				<p class="muted">…generating</p>
@@ -83,8 +85,8 @@
 			submit();
 		}}
 	>
-		<input bind:value={chat.input} placeholder="Send a prompt…" disabled={chat.busy} />
-		<button type="submit" class="primary" disabled={chat.busy}>send</button>
+		<input bind:value={store.input} placeholder="Send a prompt…" disabled={store.busy} />
+		<button type="submit" class="primary" disabled={store.busy}>send</button>
 	</form>
 </div>
 

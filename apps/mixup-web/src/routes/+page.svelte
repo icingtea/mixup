@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { ClusterSnapshot, GenerateResult } from '$lib/types';
+	import { chat } from '$lib/chat.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import ChatTab from '$lib/components/ChatTab.svelte';
 	import ExpertPanel from '$lib/components/ExpertPanel.svelte';
@@ -109,7 +110,7 @@
 			<div class="content scroll">
 				{#if active === 'chat'}
 					<div class="chat-layout">
-						<ChatTab onSend={send} />
+						<ChatTab onSend={send} store={chat} />
 						<ExpertPanel {snapshot} />
 					</div>
 				{:else if active === 'nodes'}

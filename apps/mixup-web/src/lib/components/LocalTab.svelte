@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { GenerateResult, LocalBenchResult } from '$lib/types';
+	import { localChat } from '$lib/chat.svelte';
 	import ChatTab from './ChatTab.svelte';
 
 	async function localSend(prompt: string): Promise<GenerateResult | null> {
@@ -33,7 +34,7 @@
 		single-process model · no distribution — first message loads the model, then it stays warm
 	</div>
 	<div class="chat-wrap">
-		<ChatTab onSend={localSend} />
+		<ChatTab onSend={localSend} store={localChat} />
 	</div>
 </div>
 

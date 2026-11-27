@@ -1,5 +1,6 @@
-// Shared, module-scoped chat state so the history survives tab switches (the ChatTab
-// component is remounted, but this store lives for the page's lifetime).
+// Shared, module-scoped chat state so history survives tab switches (the ChatTab
+// component is remounted, but the store lives for the page's lifetime). The main chat and
+// the local (no-distribution) chat each keep their own store.
 
 import type { RoutingAssignment } from './types';
 
@@ -18,15 +19,14 @@ export interface Msg {
 	routing?: Record<string, RoutingAssignment>;
 }
 
-export const chat = $state<{
+export interface ChatState {
 	messages: Msg[];
 	busy: boolean;
 	input: string;
-}>({
-	messages: [],
-	busy: false,
-	input: ''
-});
+}
+
+export const chat = $state<ChatState>({ messages: [], busy: false, input: '' });
+export const localChat = $state<ChatState>({ messages: [], busy: false, input: '' });
 
 export function computeUsage(counts: number[] | undefined): ExpertUsage | undefined {
 	if (!counts || counts.length === 0) return undefined;
