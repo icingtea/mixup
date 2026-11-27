@@ -32,6 +32,7 @@ class GossipLoop:
         indirect_k: int,
         send: Send | None = None,
         choose_peer: ChoosePeer | None = None,
+        on_dead: Callable[[NodeId], None] | None = None,
         clock: Clock = time.monotonic,
     ) -> None:
         self.engine = engine
@@ -41,6 +42,7 @@ class GossipLoop:
         self.indirect_k = indirect_k
         self._send = send if send is not None else lambda dest, msg: None
         self._choose_peer = choose_peer if choose_peer is not None else self._default_peer
+        self._on_dead = on_dead
         self._clock = clock
 
         # peer -> next time to advance its probe state
@@ -82,6 +84,8 @@ class GossipLoop:
                 if msg is not None:
                     self._send(None, encode_gossip(msg))
                 del self._pending[peer]
+                if self._on_dead is not None:
+                    self._on_dead(peer)
             else:  # WAIT (should not normally occur with correct scheduling)
                 self._pending[peer] = now + self.suspect_timeout
 

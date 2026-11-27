@@ -5,6 +5,7 @@ control loop: leaders generate, followers run a watchdog that promotes them on l
 failure (Phases 3/4). The FastAPI app (built in infer.py) reads this state.
 """
 
+import contextlib
 import gc
 import logging
 import threading
@@ -23,7 +24,8 @@ from mixup_core.election import (
     should_become_leader,
 )
 from mixup_core.env import NodeEnv
-from mixup_core.gossip import Alive, Dead, apply_gossip
+from mixup_core.gossip import Alive, apply_gossip, decode_gossip, encode_gossip
+from mixup_core.gossip_engine import GossipEngine
 from mixup_core.kvledger import Checkpoint, decode_checkpoint, encode_checkpoint
 from mixup_core.runtime import ClusterView, RoutingTable
 from mixup_core.scheduler import (
@@ -35,10 +37,18 @@ from mixup_core.scheduler import (
 from mixup_core.types import NodeRole
 
 from .dispatch import Dispatcher
+from .gossip_loop import GossipLoop
 from .metrics import MetricsCollector
 from .model import ExpertGroup, load_central
 
 logger = logging.getLogger(__name__)
+
+# SWIM gossip timing. Kept short so a node failure is detected in a few seconds (the
+# trade-off is more probe traffic, which is negligible for this cluster size).
+GOSSIP_INTERVAL = 0.5
+PING_TIMEOUT = 1.0
+SUSPECT_TIMEOUT = 2.0
+INDIRECT_K = 2
 
 
 class _CheckpointProcessor(LogitsProcessor):
@@ -94,30 +104,47 @@ class Node:
         self.env = env
         self.name = env.container_name
         self.model_config = model_config
-        self.view = view
         self.role: NodeRole = env.config.initial_role(self.name)
         self.ready = False
         self.expert_group: ExpertGroup | None = None
         self.model: GraniteMoeForCausalLM | None = None
         self.dispatcher: Dispatcher | None = None
         self.tokenizer = None
-        self._lock = threading.Lock()
+        # The gossip engine owns the live view (single source of truth, thread-safe) and
+        # the loop drives SWIM failure detection over the network.
+        self.engine = GossipEngine(
+            self.name,
+            view,
+            ping_timeout=PING_TIMEOUT,
+            suspect_timeout=SUSPECT_TIMEOUT,
+            indirect_k=INDIRECT_K,
+        )
+        self.loop = GossipLoop(
+            self.engine,
+            gossip_interval=GOSSIP_INTERVAL,
+            ping_timeout=PING_TIMEOUT,
+            suspect_timeout=SUSPECT_TIMEOUT,
+            indirect_k=INDIRECT_K,
+            send=self._send_gossip,
+            on_dead=self._on_member_dead,
+        )
 
     # -- control loop ------------------------------------------------------
 
     def run(self) -> None:
         """Entry point for the background control thread.
 
-        A leader only loads the dense model and then serves ``POST /generate`` — it does
-        not generate on its own. Generation starts only when a request is dispatched.
+        Boots the node and starts the SWIM gossip loop; failure detection (leader or
+        expert) is driven by the loop's ``on_dead`` callback, not by polling. The loop
+        starts after the discovery grace so peers' servers are up before probes begin.
         """
         self._discover_topology()
+        threading.Thread(target=self.loop.run, args=(0.1,), daemon=True).start()
         if self.role is NodeRole.LEADER:
             self._become_leader()
         else:
             self._load_experts()
             self._declare_rejoin()
-            self._watchdog()
 
     def _discover_topology(self, grace_seconds: float = 5.0) -> None:
         """Learn the current leader by probing peers, demoting self if the cluster moved on.
@@ -130,7 +157,7 @@ class Node:
         best_epoch = 0
         best_leader: str | None = None
         while time.monotonic() < deadline:
-            for name in self.view.members:
+            for name in self.engine.view.members:
                 if name == self.name:
                     continue
                 try:
@@ -153,25 +180,27 @@ class Node:
                 best_leader,
                 best_epoch,
             )
-            with self._lock:
-                self.view = apply_leader_announcement(self.view, best_leader, best_epoch)
-                me = self.view.members.get(self.name)
-                if me is not None:
-                    self.role = me.role
+            new_view = self.engine.mutate(
+                lambda v: apply_leader_announcement(v, best_leader, best_epoch)
+            )
+            me = new_view.members.get(self.name)
+            if me is not None:
+                self.role = me.role
 
     # -- role transitions --------------------------------------------------
 
     def _become_leader(self) -> None:
         """Shed our experts (if any), load the dense model, and become the leader."""
         if self.expert_group is not None:
-            with self._lock:
-                self.view = promote(self.view, self.name)
-                if self.view.routing is not None:
-                    new_table = rebalance_experts(
-                        self.view, self.view.routing, LeastLoadedPolicy()
-                    )
-                    self.view = ClusterView(members=self.view.members, routing=new_table)
-                shed_view = self.view
+
+            def _promote(v: ClusterView) -> ClusterView:
+                v = promote(v, self.name)
+                if v.routing is not None:
+                    new_table = rebalance_experts(v, v.routing, LeastLoadedPolicy())
+                    v = ClusterView(members=v.members, routing=new_table)
+                return v
+
+            shed_view = self.engine.mutate(_promote)
             broadcast_routing(shed_view, self.name)
             self.expert_group = None
             # Free the shed experts' GPU memory before loading the dense model, otherwise
@@ -181,8 +210,9 @@ class Node:
                 torch.cuda.empty_cache()
             logger.info("%s: shed experts, becoming leader", self.name)
 
-        assert self.view.routing is not None
-        self.dispatcher = Dispatcher(self.name, self.view.routing, self._on_expert_failure)
+        view = self.engine.view
+        assert view.routing is not None
+        self.dispatcher = Dispatcher(self.name, view.routing, self._on_expert_failure)
         self.model = load_central(self.model_config, MODEL_FILE, self.dispatcher)
         self.tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
         self.role = NodeRole.LEADER
@@ -191,31 +221,30 @@ class Node:
         self._announce_leader()
 
     def _load_experts(self) -> None:
-        assert self.view.routing is not None
-        self.expert_group = ExpertGroup(self.name, self.model_config, MODEL_FILE, self.view.routing)
+        view = self.engine.view
+        assert view.routing is not None
+        self.expert_group = ExpertGroup(self.name, self.model_config, MODEL_FILE, view.routing)
         self.ready = True
         logger.info("%s: %d experts ready", self.name, len(self.expert_group.experts))
 
     def _on_expert_failure(self, node: str) -> RoutingTable:
-        with self._lock:
-            self.view = handle_node_failure(self.view, node, by_node=self.name)
-            new_table = self.view.routing
+        view = self.engine.mutate(lambda v: handle_node_failure(v, node, by_node=self.name))
+        new_table = view.routing
         if new_table is not None:
-            broadcast_routing(self.view, self.name)
+            broadcast_routing(view, self.name)
         assert new_table is not None
         return new_table
 
     def accept_leader(self, node_id: str, epoch: int) -> None:
         """Adopt an announced leader (from another node's POST /leader)."""
-        with self._lock:
-            self.view = apply_leader_announcement(self.view, node_id, epoch)
-            me = self.view.members.get(self.name)
-            if me is not None:
-                self.role = me.role
+        new_view = self.engine.mutate(lambda v: apply_leader_announcement(v, node_id, epoch))
+        me = new_view.members.get(self.name)
+        if me is not None:
+            self.role = me.role
 
     def _declare_rejoin(self) -> None:
         """Tell the leader we're back, so it rebalances and hands us a share of experts."""
-        leader = current_leader(self.view)
+        leader = current_leader(self.engine.view)
         if leader is None or leader == self.name:
             return
         try:
@@ -226,35 +255,32 @@ class Node:
 
     def rejoin(self, node_id: str) -> None:
         """A node announced it rejoined: mark it alive and rebalance to include it."""
-        with self._lock:
-            member = self.view.members.get(node_id)
-            if member is None:
-                return
-            self.view = apply_gossip(
-                self.view,
-                Alive(
-                    node_id=node_id,
-                    incarnation=member.incarnation + 1,
-                    epoch=member.epoch,
-                ),
+        member = self.engine.view.members.get(node_id)
+        if member is None:
+            return
+
+        def _rebalance(v: ClusterView) -> ClusterView:
+            v = apply_gossip(
+                v,
+                Alive(node_id=node_id, incarnation=member.incarnation + 1, epoch=member.epoch),
             )
-            if self.view.routing is not None:
-                new_table = balance_experts(
-                    self.view, self.view.routing, LeastLoadedPolicy()
-                )
-                self.view = ClusterView(members=self.view.members, routing=new_table)
+            if v.routing is not None:
+                new_table = balance_experts(v, v.routing, LeastLoadedPolicy())
                 if self.dispatcher is not None:
                     self.dispatcher.set_table(new_table)
-        broadcast_routing(self.view, self.name)
+                return ClusterView(members=v.members, routing=new_table)
+            return v
+
+        new_view = self.engine.mutate(_rebalance)
+        broadcast_routing(new_view, self.name)
         logger.info("%s: rebalanced after %s rejoined", self.name, node_id)
 
     def _announce_leader(self) -> None:
         """Tell every other node we are the leader, so they poll us (and can fail over again)."""
-        with self._lock:
-            me = self.view.members[self.name]
-            epoch = me.epoch
+        me = self.engine.view.members[self.name]
+        epoch = me.epoch
         payload = {"node_id": self.name, "epoch": epoch}
-        for name in self.view.members:
+        for name in self.engine.view.members:
             if name == self.name:
                 continue
             try:
@@ -337,36 +363,36 @@ class Node:
         logger.info("generated: %s", text)
         return text, generated, elapsed, dense, dispatch
 
-    # -- watchdog ----------------------------------------------------------
+    # -- gossip transport + failure reaction -------------------------------
 
-    def _watchdog(self) -> None:
-        """Poll the leader's /health; on failure, promote ourselves if we win the election."""
-        interval = 1.0
-        while True:
-            time.sleep(interval)
-            with self._lock:
-                leader = current_leader(self.view)
-                if leader is None or leader == self.name:
-                    continue
-                member = self.view.members.get(leader)
-                incarnation = member.incarnation if member else 1
+    def _send_gossip(self, dest: str | None, msg: dict) -> None:
+        """Send an encoded gossip message to ``dest`` (``None`` = broadcast to all peers)."""
+        targets = (
+            [dest]
+            if dest is not None
+            else [n for n in self.engine.view.members if n != self.name]
+        )
+        for target in targets:
+            with contextlib.suppress(RequestException):
+                requests.post(f"{address(target)}/gossip", json=msg, timeout=2)
 
-            try:
-                requests.get(f"{address(leader)}/health", timeout=2)
-                continue
-            except RequestException:
-                logger.warning("leader %s appears down; checking election", leader)
+    def handle_gossip(self, msg: dict) -> None:
+        """Handle an inbound gossip message and send any replies it produces."""
+        replies = self.engine.handle(decode_gossip(msg), now=time.monotonic())
+        for dest, reply in replies:
+            self._send_gossip(dest, encode_gossip(reply))
 
-            with self._lock:
-                self.view = apply_gossip(
-                    self.view,
-                    Dead(node_id=leader, incarnation=incarnation, by_node=self.name),
-                )
-                become = should_become_leader(self.view, self.name)
+    def _on_member_dead(self, node_id: str) -> None:
+        """A peer was declared dead by the gossip loop: elect a successor or rebalance.
 
-            if become:
-                logger.info("%s: I win the election; promoting to leader", self.name)
-                self.role = NodeRole.LEADER
-                self._become_leader()
-                # Don't generate here: the new leader waits for the next /generate request.
-                return
+        The engine has already marked ``node_id`` DEAD, so ``should_become_leader`` is
+        true (for exactly one node, thanks to the total election order) only when the
+        leader died; otherwise, if an expert died and I am leader, rebalance its experts.
+        """
+        view = self.engine.view
+        if should_become_leader(view, self.name):
+            logger.info("%s: I win the election; promoting to leader", self.name)
+            self.role = NodeRole.LEADER
+            self._become_leader()
+        elif node_id != self.name and self.role is NodeRole.LEADER:
+            self._on_expert_failure(node_id)

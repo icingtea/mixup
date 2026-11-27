@@ -102,3 +102,22 @@ def test_suspect_timeout_marks_dead() -> None:
     assert len(dead) == 1
     assert dead[0]["node_id"] == "b"
     assert any(dest is None and m["type"] == "dead" for dest, m in sent)
+
+
+def test_on_dead_callback_fires() -> None:
+    dead: list[str] = []
+    loop = GossipLoop(
+        _engine(),
+        gossip_interval=1.0,
+        ping_timeout=1.0,
+        suspect_timeout=3.0,
+        indirect_k=1,
+        send=lambda dest, msg: None,
+        choose_peer=QueueChooser("b", "c"),
+        on_dead=dead.append,
+    )
+    loop.tick(0.0)   # ping b
+    loop.tick(1.0)   # PingReq
+    loop.tick(2.0)   # Suspect
+    loop.tick(5.0)   # Dead
+    assert dead == ["b"]

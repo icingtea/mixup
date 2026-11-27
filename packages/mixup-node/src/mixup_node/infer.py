@@ -2,8 +2,8 @@
 
 Run inside every container. The runtime environment (container name, startup layout,
 prompt, token budget) is read from the single MIXUP_NODE_ENV env var. Every node serves a
-persistent FastAPI app (health, leader, routing, expert); a background control thread runs
-generation (leader) or the leader watchdog (follower).
+persistent FastAPI app (health, leader, routing, gossip, generate) and a raw-TCP expert
+data plane; a background control thread boots the node and runs the SWIM gossip loop.
 """
 
 import logging
@@ -45,7 +45,12 @@ def build_app(node: Node) -> FastAPI:
 
     @app.get("/leader")
     async def leader() -> dict:
-        return leader_projection(node.view).model_dump()
+        return leader_projection(node.engine.view).model_dump()
+
+    @app.post("/gossip")
+    async def gossip(request: Request) -> dict:
+        node.handle_gossip(await request.json())
+        return {"ok": True}
 
     @app.post("/leader")
     async def leader_announce(request: Request) -> dict:

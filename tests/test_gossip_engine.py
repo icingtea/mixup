@@ -122,3 +122,15 @@ def test_on_timeout_pingreq_has_no_broadcast() -> None:
     action, msg = engine.on_timeout("b", now=1.0)
     assert action is Action.PINGREQ
     assert msg is None
+
+
+def test_mutate_applies_fn_and_sticks() -> None:
+    engine = _engine()
+    assert engine.view.members["b"].status is MemberStatus.ALIVE
+    new_view = engine.mutate(
+        lambda v: ClusterView(
+            members={k: m for k, m in v.members.items() if k != "b"}, routing=None
+        )
+    )
+    assert "b" not in new_view.members
+    assert "b" not in engine.view.members  # the mutation persisted in the shared view
