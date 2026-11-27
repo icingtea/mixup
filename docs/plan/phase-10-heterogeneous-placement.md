@@ -102,3 +102,11 @@ note. No phase merges on "works on my laptop".
 - `mixup-bench` on the 5060 (dedicated, no contention): `expert_fixed_ms ≈ 0.47 ms`,
   `expert_per_ms ≈ 0.038 ms`. The earlier ~1.6–4.6 ms round-trips were shared-GPU
   contention, not the cost of one expert forward.
+
+## Phase 1 validation (single machine, emulated)
+
+- `mixup-lab` stood up 1 GPU leader + 2 CPU expert nodes; generation is coherent and
+  correct (the CPU expert path computes in fp32 and matches the fp32 reference exactly).
+- Kill the GPU leader → a CPU node is promoted, keeps its 16 experts (leader-as-owner,
+  no shedding), loads the dense model on CPU, and keeps generating correctly
+  (slowly, as expected). This validates CPU-as-leader and leader-as-owner end-to-end.
