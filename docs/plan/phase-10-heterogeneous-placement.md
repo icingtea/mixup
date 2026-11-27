@@ -117,6 +117,26 @@ The consumers (`eviction_score`, `prefetch_threshold`) and the raw material
 Unblock order: (1) hidden-state capture in `mixup-trace`; (2) frequency + LR baseline;
 (3) the MLP; (4) eval that decides whether the MLP earns its cost.
 
+### Predictor training: online, on the leader, weights synced
+
+- **Online learning loop** runs on the leader: predict `p(e^{l+1})` at layer `l` from
+  `[h_t, e_l, c_t]`, then use the actual top-k at layer `l+1` as the label for one SGD
+  step (24 samples/token, no separate pass). The leader is the only place with the router
+  and hidden states.
+- **Output formulation**: 32 independent binary logits ("is expert i in the top-8?"),
+  per-expert binary cross-entropy, thresholded against `θ_pre` — not CoMoE's single
+  softmax, which mismatches top-k selection.
+- **Order**: LR first (simple online SGD, stable), NN behind the same `Predictor`
+  interface; the MLP is the go/no-go.
+- **Cold start**: offline pre-train on captured traces (bootstrap) then online fine-tune;
+  fall back to frequency until the predictor has enough samples.
+- **Weight sync**: a versioned `PredictorState` (monotonic version + serialized weights)
+  broadcast every `kv_sync_every` tokens (default 5) via `/predictor`, so a promoted leader
+  resumes prefetching from the last synced weights. Weights are tiny (LR ~136 KB, MLP
+  ~280 KB). Same monotonic-guard + resume pattern as the KV ledger.
+- **Safety**: prefetch is a throughput optimization only — a miss falls back to a blocking
+  load, so correctness never depends on the predictor.
+
 ## Findings so far (Phase 0)
 
 - **Placement is only non-trivial under a memory budget.** Without one, the optimizer

@@ -35,6 +35,7 @@ from mixup_core.scheduler import (
     balance_experts,
 )
 from mixup_core.stats import TraceBuffer
+from mixup_core.tokenlog import CommitTracker
 from mixup_core.types import MemberStatus, NodeRole
 
 from .dispatch import Dispatcher
@@ -136,6 +137,7 @@ class Node:
         self.kv_sync_every = env.config.kv_sync_every
         self._peer_idx = 0  # round-robin cursor for gossip peer selection
         self._trace: TraceBuffer | None = None  # leader's activation stats (Phase 2)
+        self._commit: CommitTracker | None = None  # leader's commit quorum (Phase 5)
         self._next_replan_at = REPLAN_MIN_TOKENS  # token count for the next re-plan
         self.monitor = ResourceMonitor()  # live CPU/memory/GPU sampling
 
@@ -212,6 +214,7 @@ class Node:
         view = self.engine.mutate(lambda v: promote(v, self.name))
         assert view.routing is not None
         self.role = NodeRole.LEADER
+        self._commit = CommitTracker(len(view.members))
         if self.expert_group is None:
             self.expert_group = self._make_expert_group(view.routing)
         self._trace = TraceBuffer(
