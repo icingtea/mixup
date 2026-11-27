@@ -27,14 +27,14 @@
 				animation: false,
 				scales: {
 					x: {
-						ticks: { color: '#8892a8' },
+						ticks: { color: '#71717a' },
 						grid: { display: false },
-						title: xLabel ? { display: true, text: xLabel, color: '#8892a8' } : undefined
+						title: xLabel ? { display: true, text: xLabel, color: '#71717a' } : undefined
 					},
 					y: {
 						beginAtZero: true,
-						ticks: { color: '#8892a8' },
-						grid: { color: '#21262d' }
+						ticks: { color: '#71717a' },
+						grid: { color: '#f0f0f1' }
 					}
 				},
 				plugins: { legend: { display: false } }

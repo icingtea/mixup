@@ -4,7 +4,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import ChatTab from '$lib/components/ChatTab.svelte';
 	import NodesTab from '$lib/components/NodesTab.svelte';
-	import ResourcesTab from '$lib/components/ResourcesTab.svelte';
+	import ResourcesTab from '$lib/components/MetricsTab.svelte';
 	import ExpertsTab from '$lib/components/ExpertsTab.svelte';
 	import PredictorTab from '$lib/components/PredictorTab.svelte';
 	import SummaryTab from '$lib/components/SummaryTab.svelte';
@@ -14,7 +14,7 @@
 	const TABS = [
 		{ id: 'chat', label: 'Chat' },
 		{ id: 'nodes', label: 'Nodes' },
-		{ id: 'resources', label: 'Resources' },
+		{ id: 'resources', label: 'Metrics' },
 		{ id: 'experts', label: 'Experts' },
 		{ id: 'predictor', label: 'Predictor' },
 		{ id: 'summary', label: 'Summary' },

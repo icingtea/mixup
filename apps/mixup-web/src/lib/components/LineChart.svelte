@@ -66,18 +66,18 @@
 				interaction: { mode: 'nearest', intersect: false },
 				scales: {
 					x: {
-						ticks: { color: '#8892a8', maxTicksLimit: 8, maxRotation: 0 },
-						grid: { color: '#21262d' }
+						ticks: { color: '#71717a', maxTicksLimit: 8, maxRotation: 0 },
+						grid: { color: '#f0f0f1' }
 					},
 					y: {
-						title: yLabel ? { display: true, text: yLabel, color: '#8892a8' } : undefined,
+						title: yLabel ? { display: true, text: yLabel, color: '#71717a' } : undefined,
 						min,
 						max,
-						ticks: { color: '#8892a8' },
-						grid: { color: '#21262d' }
+						ticks: { color: '#71717a' },
+						grid: { color: '#f0f0f1' }
 					}
 				},
-				plugins: { legend: { labels: { color: '#c6cdd9' } } }
+				plugins: { legend: { labels: { color: '#18181b' } } }
 			}
 		});
 		return () => chart?.destroy();

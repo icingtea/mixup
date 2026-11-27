@@ -316,6 +316,10 @@ class Node:
             "samples": getattr(self.predictor, "samples", 0),
             "top1_hits": getattr(self.predictor, "top1_hits", 0),
             "top3_hits": getattr(self.predictor, "top3_hits", 0),
+            "feature_dim": getattr(self.predictor, "feature_dim", 0),
+            "num_experts": getattr(self.predictor, "num_experts", 0),
+            "hidden_dim": getattr(self.predictor, "hidden_dim", 0),
+            "learning_rate": getattr(self.predictor, "lr", 0.0),
         }
 
     def expert_stats(self) -> dict:

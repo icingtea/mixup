@@ -6,10 +6,12 @@ import { performance } from 'node:perf_hooks';
 
 import type {
 	ClusterSnapshot,
+	DeviceProfile,
 	ExpertStats,
 	HistorySeries,
 	NodeInfo,
 	PredictorInfo,
+	ResidencyInfo,
 	Resources,
 	RoutingAssignment
 } from '$lib/types';
@@ -103,6 +105,8 @@ async function fetchNodeInfo(name: string, url: string): Promise<NodeInfo> {
 		totalTokens: 0,
 		routingEpoch: null,
 		resources: null,
+		profile: null,
+		residency: null,
 		rttMs: null
 	};
 
@@ -116,6 +120,8 @@ async function fetchNodeInfo(name: string, url: string): Promise<NodeInfo> {
 			execution?: string | null;
 			owned_experts?: number[];
 			resources?: Resources;
+			profile?: DeviceProfile | null;
+			residency?: ResidencyInfo | null;
 			stats?: { total_tokens?: number };
 			routing_epoch?: number | null;
 		};
@@ -127,6 +133,8 @@ async function fetchNodeInfo(name: string, url: string): Promise<NodeInfo> {
 		info.routingEpoch = m.routing_epoch ?? null;
 		res = m.resources ?? null;
 		info.resources = res;
+		info.profile = m.profile ?? null;
+		info.residency = m.residency ?? null;
 	} catch {
 		// keep unreachable
 	}

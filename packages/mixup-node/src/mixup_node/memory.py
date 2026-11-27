@@ -178,6 +178,29 @@ class TieredExpertStore:
     def resident_experts(self) -> int:
         return len(self._weights)
 
+    def residency_info(self) -> dict:
+        """Expose residency state for the observability UI: the eviction budget, the
+        used/free bytes on the execution tier, and the eviction/prefetch formula tunables."""
+        tier = self.execution_tier
+        cfg = self.residency.config
+        budget = self.residency.budget_bytes.get(tier)
+        return {
+            "execution_tier": tier,
+            "budget_bytes": budget,
+            "used_bytes": self.residency.used_bytes(tier),
+            "free_bytes": self.residency.free_bytes(tier),
+            "free_ratio": round(self.residency.free_ratio(tier), 4),
+            "resident_count": len(self._weights),
+            "config": {
+                "gamma": cfg.gamma,
+                "delta": cfg.delta,
+                "lambda": cfg.lambd,
+                "theta_base": cfg.theta_base,
+                "theta_mem": cfg.theta_mem,
+                "decay": cfg.decay,
+            },
+        }
+
     def prefetch(self, layer: int, experts: list[int]) -> None:
         """Prefetch ``experts`` for ``layer`` in the background (Phase 6).
 

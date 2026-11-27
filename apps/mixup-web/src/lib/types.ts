@@ -9,6 +9,41 @@ export interface Resources {
 	gpu_free_bytes: number | null;
 }
 
+export interface DeviceProfile {
+	node_id: string;
+	execution: string;
+	cpu_cores: number;
+	cpu_gflops: number;
+	gpu_tflops: number | null;
+	expert_fixed_ms: number;
+	expert_per_ms: number;
+	ram_bytes: number;
+	vram_bytes: number | null;
+	expert_budget_bytes: number | null;
+	disk_read_mbps: number;
+	disk_write_mbps: number;
+	gpu_cpu_bw_mbps: number | null;
+	can_lead: boolean;
+	lead_score: number;
+}
+
+export interface ResidencyInfo {
+	execution_tier: string;
+	budget_bytes: number | null;
+	used_bytes: number;
+	free_bytes: number;
+	free_ratio: number;
+	resident_count: number;
+	config: {
+		gamma: number;
+		delta: number;
+		lambda: number;
+		theta_base: number;
+		theta_mem: number;
+		decay: number;
+	};
+}
+
 export interface NodeInfo {
 	name: string;
 	url: string;
@@ -20,6 +55,8 @@ export interface NodeInfo {
 	totalTokens: number;
 	routingEpoch: number | null;
 	resources: Resources | null;
+	profile: DeviceProfile | null;
+	residency: ResidencyInfo | null;
 	rttMs: number | null;
 }
 
@@ -29,6 +66,10 @@ export interface PredictorInfo {
 	samples: number;
 	top1_hits: number;
 	top3_hits: number;
+	feature_dim?: number;
+	num_experts?: number;
+	hidden_dim?: number;
+	learning_rate?: number;
 }
 
 export interface ExpertStats {

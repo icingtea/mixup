@@ -149,12 +149,16 @@ def build_app(node: Node) -> FastAPI:
         """Live resource perception: smoothed CPU/memory/GPU, profile, routing, stats."""
         profile = node.env.profiles.get(node.name)
         table = node.engine.view.routing
+        residency = None
+        if isinstance(node.expert_group, TieredExpertStore):
+            residency = node.expert_group.residency_info()
         return {
             "node": node.name,
             "role": node.role.value,
             "execution": profile.execution.value if profile else None,
             "resources": node.monitor.snapshot(),
             "profile": profile.model_dump() if profile else None,
+            "residency": residency,
             "stats": {"total_tokens": node._trace.tokens if node._trace else 0},
             "routing_epoch": table.epoch if table else None,
             "owned_experts": node.expert_group.experts if node.expert_group else [],
