@@ -72,6 +72,10 @@ class KvState(BaseModel):
     fields are the metadata a successor needs to continue: how many tokens were generated
     (``kv_seq``), the next token id already computed (``next_token``), the full token
     sequence so far (``input_ids`` = prompt + generated), and the generation target.
+
+    ``epoch`` is the leadership epoch under which the snapshot was taken; it makes the
+    freshest-wins ordering survive a failover, where a promoted leader's ``kv_seq``
+    restarts at 0 but its epoch is higher.
     """
 
     kv_seq: int
@@ -79,6 +83,7 @@ class KvState(BaseModel):
     input_ids: list[int]
     max_new_tokens: int
     cache_b64: str
+    epoch: int = 0
 
 
 def encode_kv_state(state: KvState) -> bytes:

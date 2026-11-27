@@ -66,6 +66,31 @@ class GossipEngine:
             kv_seq=me.kv_seq,
         )
 
+    def _merge_peer(self, node_id: NodeId, incarnation: int, epoch: int, kv_seq: int) -> None:
+        """Adopt a peer's fresher (incarnation, epoch, kv_seq) seen in a gossip message.
+
+        This is how a node's KV-cache freshness (``kv_seq``) and leadership epoch reach the
+        rest of the cluster: Ping/Ack carry them, and the election ranks by ``kv_seq``
+        first, so without this the winner can't prefer the most up-to-date node.
+        """
+        member = self.view.members.get(node_id)
+        if member is None or incarnation < member.incarnation:
+            return  # unknown, or a stale (older-incarnation) message
+        if incarnation > member.incarnation:
+            # A restart: adopt the new incarnation and its epoch/kv_seq wholesale.
+            updated = member.model_copy(
+                update={"incarnation": incarnation, "epoch": epoch, "kv_seq": kv_seq}
+            )
+        elif epoch > member.epoch or kv_seq > member.kv_seq:
+            updated = member.model_copy(
+                update={"epoch": max(member.epoch, epoch), "kv_seq": max(member.kv_seq, kv_seq)}
+            )
+        else:
+            return
+        self.view = ClusterView(
+            members={**self.view.members, node_id: updated}, routing=self.view.routing
+        )
+
     # -- outbound triggers -------------------------------------------------
 
     def probe(self, peer: NodeId, now: float) -> Ping:
@@ -105,6 +130,7 @@ class GossipEngine:
         """
         with self._lock:
             if isinstance(msg, Ping):
+                self._merge_peer(msg.node_id, msg.incarnation, msg.epoch, msg.kv_seq)
                 me = self._self()
                 ack = Ack(
                     node_id=self.node_id,
@@ -115,6 +141,7 @@ class GossipEngine:
                 return [(msg.node_id, ack)]
 
             if isinstance(msg, Ack):
+                self._merge_peer(msg.node_id, msg.incarnation, msg.epoch, msg.kv_seq)
                 out: list[tuple[NodeId | None, GossipMsg]] = []
                 if self.detector.ack(msg.node_id):
                     alive = Alive(
@@ -149,7 +176,12 @@ class GossipEngine:
                 # from ever firing.
                 return [(msg.target, self._self_ping())]
 
-            if isinstance(msg, (Suspect, Dead, Alive)):
+            if isinstance(msg, Alive):
+                self._merge_peer(msg.node_id, msg.incarnation, msg.epoch, 0)
+                self.view = apply_gossip(self.view, msg)
+                return []
+
+            if isinstance(msg, (Suspect, Dead)):
                 self.view = apply_gossip(self.view, msg)
                 return []
 

@@ -134,3 +134,23 @@ def test_mutate_applies_fn_and_sticks() -> None:
     )
     assert "b" not in new_view.members
     assert "b" not in engine.view.members  # the mutation persisted in the shared view
+
+
+def test_ping_merges_peer_kv_seq_and_epoch() -> None:
+    engine = _engine()
+    engine.handle(Ping(node_id="b", incarnation=1, epoch=2, kv_seq=42), now=0.0)
+    assert engine.view.members["b"].epoch == 2
+    assert engine.view.members["b"].kv_seq == 42
+
+
+def test_ack_merges_peer_kv_seq() -> None:
+    engine = _engine()
+    engine.handle(Ack(node_id="c", incarnation=1, epoch=0, kv_seq=7), now=0.0)
+    assert engine.view.members["c"].kv_seq == 7
+
+
+def test_stale_incarnation_is_not_merged() -> None:
+    engine = _engine()
+    engine.handle(Ping(node_id="b", incarnation=0, epoch=5, kv_seq=99), now=0.0)
+    assert engine.view.members["b"].epoch == 0
+    assert engine.view.members["b"].kv_seq == 0

@@ -409,6 +409,7 @@ class Node:
             input_ids=input_ids,
             max_new_tokens=max_new_tokens,
             cache_b64=cache_b64,
+            epoch=self.engine.view.members[self.name].epoch,
         )
         threading.Thread(
             target=self._send_kv, args=(encode_kv_state(state),), daemon=True
@@ -422,11 +423,17 @@ class Node:
                 requests.post(f"{address(name)}/kv", data=payload, timeout=5)
 
     def store_kv(self, body: bytes) -> None:
-        """Store a warm KV-cache snapshot from the leader (freshest wins)."""
+        """Store a warm KV-cache snapshot from the leader (freshest wins).
+
+        Ordering is ``(epoch, kv_seq)``: a promoted leader's ``kv_seq`` restarts at 0 but
+        its epoch is higher, so its snapshots still replace the dead leader's.
+        """
         state = decode_kv_state(body)
-        if self._kv is None or state.kv_seq >= self._kv.kv_seq:
+        if self._kv is None or (state.epoch, state.kv_seq) >= (self._kv.epoch, self._kv.kv_seq):
             self._kv = state
-            logger.info("kv: stored warm snapshot (kv_seq=%d)", state.kv_seq)
+            logger.info(
+                "kv: stored warm snapshot (epoch=%d kv_seq=%d)", state.epoch, state.kv_seq
+            )
 
     def _bump_kv_seq(self, kv_seq: int) -> None:
         """Record our global token count in the view so gossip carries it for elections."""
@@ -467,9 +474,9 @@ class Node:
         if not alive:
             statuses = {m.node_id: m.status.value for m in self.engine.view.members.values()}
             logger.info(
-                "gossip: no peer to ping (statuses=%s pending=%s)",
+                "gossip: no peer to ping (statuses=%s exclude=%s)",
                 statuses,
-                sorted(self._pending),
+                sorted(exclude),
             )
             return None
         peer = alive[self._peer_idx % len(alive)]

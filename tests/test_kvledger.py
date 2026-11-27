@@ -38,5 +38,6 @@ def test_kv_state_roundtrip() -> None:
         input_ids=[1, 2, 3, 203, 44],
         max_new_tokens=50,
         cache_b64="aGVsbG8=",
+        epoch=3,
     )
     assert decode_kv_state(encode_kv_state(state)) == state
