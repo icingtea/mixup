@@ -11,7 +11,6 @@ This is the node-side half of the offloading layer. The pure ``Residency`` core 
 The wire is bf16; CPU nodes compute in fp32 and cast back (see ``model._expert_dtype``).
 """
 
-import logging
 from pathlib import Path
 
 import torch
@@ -25,8 +24,6 @@ from mixup_core.residency import Residency
 from mixup_core.tiers import Tier
 
 from .model import _expert_dtype
-
-logger = logging.getLogger(__name__)
 
 
 class TieredExpertStore:
@@ -149,25 +146,32 @@ class TieredExpertStore:
         top_k_index: Tensor,
         top_k_weights: Tensor,
     ) -> Tensor:
-        """Run this node's share of one layer: owned selected experts, loading on miss."""
+        """Run this node's share of one layer: owned selected experts, loading on miss.
+
+        Handles batched inputs (the prefill sends all prompt tokens at once); each token
+        contributes its own weighted experts.
+        """
         if not self.owned:
             return torch.zeros_like(hidden_states)
         device = self.device
-        hidden = hidden_states.to(device, self.dtype)
-        selected = top_k_index.flatten().tolist()
-        weights = top_k_weights.flatten().to(device, self.dtype)
+        hidden = hidden_states.to(device, self.dtype)  # (T, hidden)
+        top_k_index = top_k_index.to(device)  # (T, K) int64
+        top_k_weights = top_k_weights.to(device, self.dtype)  # (T, K)
 
         # Accumulate in fp32 (like the model's grouped_mm path, which sums in fp32 to
         # avoid bf16 accumulation error); cast back to bf16 only at the wire boundary.
         out = torch.zeros(hidden.shape, dtype=torch.float32, device=device)
-        for pos, expert in enumerate(selected):
-            if expert not in self.owned:
-                continue
-            w = self.ensure(layer, expert)
-            gate, up = F.linear(hidden, w["gate_up"]).chunk(2, dim=-1)
-            y = F.silu(gate) * up
-            y = F.linear(y, w["down"])
-            out += (y * weights[pos]).to(torch.float32)
+        num_tokens, top_k = top_k_index.shape
+        for token in range(num_tokens):
+            for pos in range(top_k):
+                expert = int(top_k_index[token, pos])
+                if expert not in self.owned:
+                    continue
+                w = self.ensure(layer, expert)
+                gate, up = F.linear(hidden[token], w["gate_up"]).chunk(2, dim=-1)
+                y = F.silu(gate) * up
+                y = F.linear(y, w["down"])
+                out[token] += (y * top_k_weights[token, pos]).to(torch.float32)
         return out.to(torch.bfloat16)
 
     def resident_experts(self) -> int:
