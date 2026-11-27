@@ -25,28 +25,32 @@
     },
     "container_2": {
       "node_id": "container_2",
-      "execution": "cpu",
-      "cpu_cores": 4,
-      "cpu_gflops": 30.0,
-      "expert_fixed_ms": 2.0,
-      "expert_per_ms": 3.0,
-      "ram_bytes": 8589934592,
-      "disk_read_mbps": 80.0
+      "execution": "gpu",
+      "cpu_cores": 20,
+      "gpu_tflops": 31.0,
+      "expert_fixed_ms": 0.47,
+      "expert_per_ms": 0.038,
+      "ram_bytes": 32740552704,
+      "vram_bytes": 8082096128,
+      "expert_budget_bytes": 906000000,
+      "disk_read_mbps": 1057.0
     },
     "container_3": {
       "node_id": "container_3",
-      "execution": "cpu",
-      "cpu_cores": 4,
-      "cpu_gflops": 30.0,
-      "expert_fixed_ms": 2.0,
-      "expert_per_ms": 3.0,
-      "ram_bytes": 8589934592,
-      "disk_read_mbps": 80.0
+      "execution": "gpu",
+      "cpu_cores": 20,
+      "gpu_tflops": 31.0,
+      "expert_fixed_ms": 0.47,
+      "expert_per_ms": 0.038,
+      "ram_bytes": 32740552704,
+      "vram_bytes": 8082096128,
+      "expert_budget_bytes": 906000000,
+      "disk_read_mbps": 1057.0
     }
   },
   "specs": {
-    "container_2": { "execution": "cpu", "cpus": 4.0, "memory_mb": 6144 },
-    "container_3": { "execution": "cpu", "cpus": 4.0, "memory_mb": 6144 }
+    "container_2": { "execution": "gpu", "memory_mb": 6144 },
+    "container_3": { "execution": "gpu", "memory_mb": 6144 }
   },
   "profile_mode": "hybrid"
 }
