@@ -121,3 +121,11 @@ def test_on_dead_callback_fires() -> None:
     loop.tick(2.0)   # Suspect
     loop.tick(5.0)   # Dead
     assert dead == ["b"]
+
+
+def test_on_ack_clears_pending() -> None:
+    loop, _ = _loop(_engine(), "b")
+    loop.tick(0.0)  # ping b -> pending b
+    assert "b" in loop._pending
+    loop.on_ack("b")
+    assert "b" not in loop._pending

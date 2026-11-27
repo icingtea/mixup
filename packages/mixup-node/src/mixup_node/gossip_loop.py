@@ -106,3 +106,7 @@ class GossipLoop:
         while True:
             self.tick(self._clock())
             time.sleep(interval)
+
+    def on_ack(self, peer: NodeId) -> None:
+        """A probe of ``peer`` was acked; drop its pending entry so it can be re-probed."""
+        self._pending.pop(peer, None)

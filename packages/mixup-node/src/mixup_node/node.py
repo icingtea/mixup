@@ -25,7 +25,7 @@ from mixup_core.election import (
     should_become_leader,
 )
 from mixup_core.env import NodeEnv
-from mixup_core.gossip import Alive, apply_gossip, decode_gossip, encode_gossip
+from mixup_core.gossip import Ack, Alive, apply_gossip, decode_gossip, encode_gossip
 from mixup_core.gossip_engine import GossipEngine
 from mixup_core.kvledger import KvState, decode_kv_state, encode_kv_state
 from mixup_core.runtime import ClusterView, RoutingTable
@@ -35,7 +35,7 @@ from mixup_core.scheduler import (
     handle_node_failure,
     rebalance_experts,
 )
-from mixup_core.types import NodeRole
+from mixup_core.types import MemberStatus, NodeRole
 
 from .dispatch import Dispatcher
 from .gossip_loop import GossipLoop
@@ -109,6 +109,7 @@ class Node:
             suspect_timeout=SUSPECT_TIMEOUT,
             indirect_k=INDIRECT_K,
             send=self._send_gossip,
+            choose_peer=self._choose_peer,
             on_dead=self._on_member_dead,
         )
         # The freshest warm KV-cache snapshot this node has received (as a follower), for
@@ -116,6 +117,7 @@ class Node:
         self._kv: KvState | None = None
         self._kv_seq = 0  # global monotonic token count (election freshness + dedup)
         self.kv_sync_every = env.config.kv_sync_every
+        self._peer_idx = 0  # round-robin cursor for gossip peer selection
 
     # -- control loop ------------------------------------------------------
 
@@ -438,6 +440,21 @@ class Node:
 
     # -- gossip transport + failure reaction -------------------------------
 
+    def _choose_peer(self, exclude: frozenset[str]) -> str | None:
+        """Round-robin over the alive peers so every node gets probed (not just the first)."""
+        alive = [
+            m.node_id
+            for m in self.engine.view.members.values()
+            if m.status is MemberStatus.ALIVE
+            and m.node_id != self.name
+            and m.node_id not in exclude
+        ]
+        if not alive:
+            return None
+        peer = alive[self._peer_idx % len(alive)]
+        self._peer_idx += 1
+        return peer
+
     def _send_gossip(self, dest: str | None, msg: dict) -> None:
         """Send an encoded gossip message to ``dest`` (``None`` = broadcast to all peers)."""
         targets = (
@@ -450,10 +467,23 @@ class Node:
                 requests.post(f"{address(target)}/gossip", json=msg, timeout=2)
 
     def handle_gossip(self, msg: dict) -> None:
-        """Handle an inbound gossip message and send any replies it produces."""
-        replies = self.engine.handle(decode_gossip(msg), now=time.monotonic())
-        for dest, reply in replies:
-            self._send_gossip(dest, encode_gossip(reply))
+        """Handle an inbound gossip message and send any replies it produces.
+
+        Replies are sent on a background thread: the FastAPI handler runs on the event
+        loop, and a synchronous reply POST could deadlock two nodes that ping each other
+        at once (each blocking its loop waiting for the other's ack).
+        """
+        decoded = decode_gossip(msg)
+        replies = self.engine.handle(decoded, now=time.monotonic())
+        if isinstance(decoded, Ack):
+            self.loop.on_ack(decoded.node_id)
+        if replies:
+            encoded = [(dest, encode_gossip(reply)) for dest, reply in replies]
+            threading.Thread(target=self._send_gossip_replies, args=(encoded,), daemon=True).start()
+
+    def _send_gossip_replies(self, replies: list[tuple[str | None, dict]]) -> None:
+        for dest, msg in replies:
+            self._send_gossip(dest, msg)
 
     def _on_member_dead(self, node_id: str) -> None:
         """A peer was declared dead by the gossip loop: elect a successor or rebalance.
