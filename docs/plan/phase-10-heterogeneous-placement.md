@@ -119,3 +119,19 @@ note. No phase merges on "works on my laptop".
   the two CPU nodes (8 / 12 / 12). Post-replan generation is correct and faster, and the
   leader loads its 8 experts on the fly (leader-as-owner). Churn is amortized over the
   placement horizon so the optimizer will actually move experts.
+
+## Phase 3 (tiered residency) — in progress
+
+- Pure core (`tiers.py` + `residency.py`): storage ladders (disk never an execution tier),
+  retention/eviction/prefetch scores, and a byte-budgeted residency manager. Unit-tested.
+- Node `TieredExpertStore`: per-(layer, expert) lazy load from the model file, eviction
+  under budget, fp32 accumulation (matches grouped_mm numerics exactly). CPU + GPU smoke
+  tests pass (output matches the reference).
+- **Fixed: batched prefill bug.** The store flattened `top_k_index` and applied one weight
+  to every token, so the batched prefill produced wrong expert sums and garbage generation
+  after re-planning. Now iterates per (token, position).
+- **Fixed: stale routing tables.** `/routing` applied any table to the expert group; a
+  stale broadcast (lower epoch) could overwrite a newer placement. Now ignores older
+  tables and updates the view via `apply_routing`.
+- Validated end-to-end: post-replan generation is correct and *faster* than pre-replan
+  (the leader's GPU now serves the hot experts instead of the CPU nodes).
