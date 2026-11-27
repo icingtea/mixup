@@ -310,7 +310,7 @@ class Dispatcher:
             )
         return out
 
-    def wait_for_experts(self, timeout: float = 30.0) -> None:
+    def wait_for_experts(self, timeout: float = 10.0) -> None:
         """Wait for each expert to report ready, giving up after ``timeout`` per node.
 
         A dead node is skipped here: the dispatch fails over to the rebalanced set on

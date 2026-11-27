@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 # otherwise trigger an unnecessary failover.
 GOSSIP_INTERVAL = 0.5
 PING_TIMEOUT = 5.0
-SUSPECT_TIMEOUT = 10.0
+SUSPECT_TIMEOUT = 5.0
 INDIRECT_K = 2
 
 DEAD_REPROBE_INTERVAL = 5.0
@@ -927,6 +927,10 @@ class Node:
         if should_become_leader(view, self.name):
             logger.info("%s: I win the election; promoting to leader", self.name)
             self.ready = False  # not ready to generate until the dense model is loaded
+            # Re-home the dead leader's experts *before* promoting, so the dispatcher's
+            # routing table doesn't still point at the dead node — otherwise the first
+            # generation's wait_for_experts stalls polling a dead peer.
+            self.engine.mutate(lambda v: failover_with_backups(v, node_id, by_node=self.name))
             self._become_leader()
         elif node_id != self.name and self.role == NodeRole.LEADER:
             self._on_expert_failure(node_id)
