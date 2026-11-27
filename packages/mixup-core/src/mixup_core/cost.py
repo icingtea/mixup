@@ -23,6 +23,34 @@ def _transfer_ms(bytes_: float, mbps: float) -> float:
     return bytes_ / (mbps * _BYTES_PER_MB) * _MS_PER_S
 
 
+def load_ms(profile: DeviceProfile, from_tier: str, bytes_: float) -> float:
+    """Time to bring one expert (``bytes_``) from ``from_tier`` to the execution tier.
+
+    ``from_tier`` is ``"gpu"``/``"cpu"``/``"disk"``; ``"gpu"`` is only valid on a GPU
+    device. Raises on an unknown tier or a GPU device missing its PCIe bandwidth. This is
+    the report's tier-loading cost (§3.5); disk is never an execution tier.
+    """
+    if from_tier not in ("gpu", "cpu", "disk"):
+        raise ValueError(f"unknown tier {from_tier!r}")
+
+    if profile.execution is ExecutionType.GPU:
+        if from_tier == "gpu":
+            return 0.0
+        if profile.gpu_cpu_bw_mbps is None or profile.gpu_cpu_bw_mbps <= 0:
+            raise ValueError(f"GPU node {profile.node_id!r} has no gpu_cpu_bw_mbps")
+        cpu_gpu = _transfer_ms(bytes_, profile.gpu_cpu_bw_mbps)
+        if from_tier == "cpu":
+            return cpu_gpu
+        return _transfer_ms(bytes_, profile.disk_read_mbps) + cpu_gpu
+
+    # CPU-only: CPU memory is the execution tier.
+    if from_tier == "cpu":
+        return 0.0
+    if from_tier == "gpu":
+        raise ValueError(f"CPU node {profile.node_id!r} has no GPU tier")
+    return _transfer_ms(bytes_, profile.disk_read_mbps)
+
+
 class CostModel:
     """Latency model over a set of device profiles."""
 
@@ -39,31 +67,8 @@ class CostModel:
         return rtt_ms
 
     def load_ms(self, node: str, from_tier: str, bytes_: float) -> float:
-        """Time to bring one expert (``bytes_``) from ``from_tier`` to the execution tier.
-
-        ``from_tier`` is ``"gpu"``/``"cpu"``/``"disk"``; ``"gpu"`` is only valid on a GPU
-        device. Raises on an unknown tier or a GPU device missing its PCIe bandwidth.
-        """
-        p = self.profiles[node]
-        if from_tier not in ("gpu", "cpu", "disk"):
-            raise ValueError(f"unknown tier {from_tier!r}")
-
-        if p.execution is ExecutionType.GPU:
-            if from_tier == "gpu":
-                return 0.0
-            if p.gpu_cpu_bw_mbps is None or p.gpu_cpu_bw_mbps <= 0:
-                raise ValueError(f"GPU node {node!r} has no gpu_cpu_bw_mbps")
-            cpu_gpu = _transfer_ms(bytes_, p.gpu_cpu_bw_mbps)
-            if from_tier == "cpu":
-                return cpu_gpu
-            return _transfer_ms(bytes_, p.disk_read_mbps) + cpu_gpu
-
-        # CPU-only: CPU memory is the execution tier.
-        if from_tier == "cpu":
-            return 0.0
-        if from_tier == "gpu":
-            raise ValueError(f"CPU node {node!r} has no GPU tier")
-        return _transfer_ms(bytes_, p.disk_read_mbps)
+        """Time to bring one expert (``bytes_``) from ``from_tier`` to the execution tier."""
+        return load_ms(self.profiles[node], from_tier, bytes_)
 
     def layer_ms(self, loads: dict[str, int], rtt_ms: dict[str, float]) -> float:
         """One layer's dispatch+compute: the max over the nodes serving it.
