@@ -48,6 +48,17 @@ def test_load_startup_config(tmp_path: Path) -> None:
     assert config.experts == {"c2": [0, 1]}
 
 
+def test_load_startup_config_from_lab_config(tmp_path: Path) -> None:
+    path = tmp_path / "lab_config.json"
+    path.write_text(
+        '{"startup": {"initial_leader": "c1", "nodes": ["c1", "c2"], '
+        '"experts": {"c2": [0, 1]}}, "profiles": {}, "specs": {}}'
+    )
+    config = load_startup_config(path)
+    assert config.initial_leader == "c1"
+    assert config.experts == {"c2": [0, 1]}
+
+
 def test_nodes_parsed() -> None:
     config = _config()
     assert config.nodes == ["container_1", "container_2", "container_3"]

@@ -121,9 +121,8 @@ def main(argv: list[str] | None = None) -> int:
 
     leader = lab.startup.initial_leader
     _start_node(client, image, leader, EXTERNAL_PORT_BASE, lab, args.prompt, args.max_new_tokens)
-    for offset, name in enumerate(lab.startup.nodes):
-        if name == leader:
-            continue
+    others = [n for n in lab.startup.nodes if n != leader]
+    for offset, name in enumerate(others):
         _start_node(
             client,
             image,
