@@ -55,6 +55,9 @@ INDIRECT_K = 2
 REPLAN_MIN_TOKENS = 50
 """Minimum observed tokens before the leader re-places experts from activation stats."""
 
+REPLAN_INTERVAL_TOKENS = 200
+"""Re-evaluate placement every this many observed tokens (after the first re-plan)."""
+
 
 def _assignment_summary(table: RoutingTable) -> dict[str, int]:
     """Per-node expert counts, for logging placement changes."""
@@ -130,7 +133,7 @@ class Node:
         self.kv_sync_every = env.config.kv_sync_every
         self._peer_idx = 0  # round-robin cursor for gossip peer selection
         self._trace: TraceBuffer | None = None  # leader's activation stats (Phase 2)
-        self._replanned_once = False  # auto-re-plan after the first warm generation
+        self._next_replan_at = REPLAN_MIN_TOKENS  # token count for the next re-plan
 
     # -- control loop ------------------------------------------------------
 
@@ -464,14 +467,11 @@ class Node:
         text = self.tokenizer.decode(generated_ids)
         logger.info("generated: %s", text)
 
-        # Phase 2: after our first warm generation, re-place experts resource-awarely
-        # (once). Subsequent re-plans are driven by /replan or the coarse loop (Phase 4).
-        if (
-            not self._replanned_once
-            and self._trace is not None
-            and self._trace.tokens >= REPLAN_MIN_TOKENS
-        ):
-            self._replanned_once = True
+        # Phase 2/4 coarse loop: re-place experts periodically as activation stats drift.
+        # The placement objective amortizes churn, so re-planning only moves experts when
+        # the latency gain is worth the reload cost (anti-oscillation).
+        if self._trace is not None and self._trace.tokens >= self._next_replan_at:
+            self._next_replan_at = self._trace.tokens + REPLAN_INTERVAL_TOKENS
             self.replan()
 
         return text, generated, elapsed, dense, dispatch
