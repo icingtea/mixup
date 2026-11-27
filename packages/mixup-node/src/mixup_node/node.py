@@ -130,7 +130,7 @@ class Node:
         callback.
         """
         self._discover_topology()
-        if self.role is NodeRole.LEADER:
+        if self.role == NodeRole.LEADER:
             self._become_leader()
         else:
             self._load_experts()
@@ -460,11 +460,17 @@ class Node:
         alive = [
             m.node_id
             for m in self.engine.view.members.values()
-            if m.status is MemberStatus.ALIVE
+            if m.status == MemberStatus.ALIVE
             and m.node_id != self.name
             and m.node_id not in exclude
         ]
         if not alive:
+            statuses = {m.node_id: m.status.value for m in self.engine.view.members.values()}
+            logger.info(
+                "gossip: no peer to ping (statuses=%s pending=%s)",
+                statuses,
+                sorted(self._pending),
+            )
             return None
         peer = alive[self._peer_idx % len(alive)]
         self._peer_idx += 1
@@ -501,7 +507,7 @@ class Node:
             logger.info("%s: I win the election; promoting to leader", self.name)
             self.role = NodeRole.LEADER
             self._become_leader()
-        elif node_id != self.name and self.role is NodeRole.LEADER:
+        elif node_id != self.name and self.role == NodeRole.LEADER:
             self._on_expert_failure(node_id)
         else:
             logger.info(

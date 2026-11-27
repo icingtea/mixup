@@ -16,7 +16,7 @@ def elect(view: ClusterView) -> NodeId | None:
     The rank ``(kv_seq, priority, node_id)`` is a total order, so the winner is
     deterministic even when two nodes disagree on message order.
     """
-    alive = [m for m in view.members.values() if m.status is MemberStatus.ALIVE]
+    alive = [m for m in view.members.values() if m.status == MemberStatus.ALIVE]
     if not alive:
         return None
     return max(alive, key=lambda m: (m.kv_seq, m.priority, m.node_id)).node_id
@@ -42,7 +42,7 @@ def leader_projection(view: ClusterView) -> LeaderProjection:
 def current_leader(view: ClusterView) -> NodeId | None:
     """The alive node with role ``LEADER``, else ``None``."""
     for member in view.members.values():
-        if member.role is NodeRole.LEADER and member.status is MemberStatus.ALIVE:
+        if member.role == NodeRole.LEADER and member.status == MemberStatus.ALIVE:
             return member.node_id
     return None
 
@@ -68,7 +68,7 @@ def promote(view: ClusterView, node_id: NodeId) -> ClusterView:
             member.model_copy(update={"role": NodeRole.LEADER, "epoch": new_epoch})
             if name == node_id
             else member.model_copy(update={"role": NodeRole.EXPERT})
-            if member.role is NodeRole.LEADER
+            if member.role == NodeRole.LEADER
             else member
         )
         for name, member in view.members.items()
@@ -94,7 +94,7 @@ def apply_leader_announcement(view: ClusterView, node_id: NodeId, epoch: int) ->
             )
             if name == node_id
             else member.model_copy(update={"role": NodeRole.EXPERT})
-            if member.role is NodeRole.LEADER
+            if member.role == NodeRole.LEADER
             else member
         )
         for name, member in view.members.items()

@@ -55,7 +55,7 @@ class GossipLoop:
     def _default_peer(self, exclude: frozenset[NodeId] = frozenset()) -> NodeId | None:
         for member in self.engine.view.members.values():
             if (
-                member.status is MemberStatus.ALIVE
+                member.status == MemberStatus.ALIVE
                 and member.node_id != self.engine.node_id
                 and member.node_id not in exclude
             ):
@@ -72,8 +72,6 @@ class GossipLoop:
                 ping = self.engine.probe(peer, now)
                 self._pending[peer] = now + self.ping_timeout
                 self._send(peer, encode_gossip(ping))
-            else:
-                logger.info("gossip: no peer to ping (pending=%s)", sorted(self._pending))
 
     def _process_timeouts(self, now: float) -> None:
         for peer in [p for p, t in self._pending.items() if now >= t]:

@@ -31,7 +31,7 @@ class LeastLoadedPolicy:
         alive = [
             m
             for m in view.members.values()
-            if m.status is MemberStatus.ALIVE and m.role is NodeRole.EXPERT
+            if m.status == MemberStatus.ALIVE and m.role == NodeRole.EXPERT
         ]
         if not experts or not alive:
             return {}
@@ -53,7 +53,7 @@ def _alive_expert_ids(view: ClusterView) -> set[NodeId]:
     return {
         m.node_id
         for m in view.members.values()
-        if m.status is MemberStatus.ALIVE and m.role is NodeRole.EXPERT
+        if m.status == MemberStatus.ALIVE and m.role == NodeRole.EXPERT
     }
 
 

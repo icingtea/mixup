@@ -99,7 +99,7 @@ def apply_gossip(view: ClusterView, msg: GossipMsg) -> ClusterView:
     if isinstance(msg, Alive):
         return _set_status(view, msg.node_id, MemberStatus.ALIVE)
     if isinstance(msg, Suspect):
-        if member.status is MemberStatus.ALIVE:
+        if member.status == MemberStatus.ALIVE:
             return _set_status(view, msg.node_id, MemberStatus.SUSPECT)
         return view
     if isinstance(msg, Dead):
@@ -122,7 +122,7 @@ def _member_newer(a: MemberState, b: MemberState) -> bool:
     """
     if a.incarnation != b.incarnation:
         return a.incarnation > b.incarnation
-    return _STATUS_RANK[a.status] > _STATUS_RANK[b.status]
+    return _STATUS_RANK[MemberStatus(a.status)] > _STATUS_RANK[MemberStatus(b.status)]
 
 
 def merge_views(local: ClusterView, remote: ClusterView) -> ClusterView:
