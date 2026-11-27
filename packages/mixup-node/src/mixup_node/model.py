@@ -39,6 +39,15 @@ def _device() -> torch.device:
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def _expert_dtype(device: torch.device) -> torch.dtype:
+    """The dtype experts compute in on this device: bf16 on GPU, fp32 on CPU.
+
+    CPU (especially ARM Pis) has weak bf16 support, so CPU expert nodes compute in fp32
+    and cast their output back to bf16 at the wire boundary to match the leader.
+    """
+    return torch.bfloat16 if device.type == "cuda" else torch.float32
+
+
 def empty_model(model_config: GraniteMoeConfig) -> GraniteMoeForCausalLM:
     """Build the whole model with no weights yet (meta device: shapes but no data)."""
     with torch.device("meta"):
@@ -191,9 +200,13 @@ class ExpertGroup:
 
         gate_up = torch.cat([all_gate_up[e : e + 1] for e in self.experts], dim=0)
         down = torch.cat([all_down[e : e + 1] for e in self.experts], dim=0)
+        device = _device()
+        if device.type == "cpu":
+            gate_up = gate_up.to(torch.float32)
+            down = down.to(torch.float32)
         experts = empty_experts(self.model_config, len(self.experts))
         experts.load_state_dict({"gate_up_proj": gate_up, "down_proj": down}, assign=True)
-        return experts.to(_device()).eval()
+        return experts.to(device).eval()
 
     @torch.no_grad()
     def forward(
@@ -207,10 +220,14 @@ class ExpertGroup:
         if not self.experts:
             return torch.zeros_like(hidden_states)
         device = _device()
-        hidden_states = hidden_states.to(device)
+        dtype = _expert_dtype(device)
+        hidden_states = hidden_states.to(device, dtype)
         top_k_index = top_k_index.to(device)
-        top_k_weights = top_k_weights.to(device)
+        top_k_weights = top_k_weights.to(device, dtype)
         assert self._slot_or_skip is not None and self._owned is not None
         slots = self._slot_or_skip[top_k_index]
         weights = top_k_weights * self._owned[top_k_index]
-        return self.layers[layer](hidden_states, slots, weights)
+        out = self.layers[layer](hidden_states, slots, weights)
+        # The wire is bf16 (the leader's residual stream); cast back so the leader's
+        # reduce stays exact regardless of whether this node computed in fp32 or bf16.
+        return out.to(torch.bfloat16)
