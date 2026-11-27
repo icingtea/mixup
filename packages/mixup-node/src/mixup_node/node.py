@@ -46,11 +46,12 @@ from .monitor import ResourceMonitor
 
 logger = logging.getLogger(__name__)
 
-# SWIM gossip timing. Kept short so a node failure is detected in a few seconds (the
-# trade-off is more probe traffic, which is negligible for this cluster size).
+# SWIM gossip timing. Ping/suspect timeouts are long enough to tolerate a peer reloading
+# experts (a GIL-heavy torch load of several seconds) without a spurious DEAD, which would
+# otherwise trigger an unnecessary failover.
 GOSSIP_INTERVAL = 0.5
-PING_TIMEOUT = 1.0
-SUSPECT_TIMEOUT = 2.0
+PING_TIMEOUT = 5.0
+SUSPECT_TIMEOUT = 10.0
 INDIRECT_K = 2
 
 REPLAN_MIN_TOKENS = 50
