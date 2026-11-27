@@ -282,6 +282,10 @@ class LatencyPolicy:
                         continue
                     candidate = dict(best)
                     candidate[e] = node
+                    # Memory budget is a hard constraint (the report's "subject to the
+                    # memory capacity of every tier"), not a soft penalty.
+                    if problem.budget_bytes is not None and violation_bytes(problem, candidate) > 0:
+                        continue
                     score = objective(problem, candidate, self.num_samples, self.seed)
                     if score < best_score:
                         best, best_score = candidate, score
