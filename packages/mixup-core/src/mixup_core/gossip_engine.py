@@ -117,16 +117,14 @@ class GossipEngine:
             if isinstance(msg, Ack):
                 out: list[tuple[NodeId | None, GossipMsg]] = []
                 if self.detector.ack(msg.node_id):
-                    out.append(
-                        (
-                            None,
-                            Alive(
-                                node_id=msg.node_id,
-                                incarnation=msg.incarnation,
-                                epoch=msg.epoch,
-                            ),
-                        )
+                    alive = Alive(
+                        node_id=msg.node_id,
+                        incarnation=msg.incarnation,
+                        epoch=msg.epoch,
                     )
+                    # Revive in our own view too (not just broadcast to peers).
+                    self.view = apply_gossip(self.view, alive)
+                    out.append((None, alive))
                 for requester in self._relays.pop(msg.node_id, []):
                     out.append(
                         (

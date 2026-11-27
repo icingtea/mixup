@@ -124,17 +124,18 @@ class Node:
     def run(self) -> None:
         """Entry point for the background control thread.
 
-        Boots the node and starts the SWIM gossip loop; failure detection (leader or
-        expert) is driven by the loop's ``on_dead`` callback, not by polling. The loop
-        starts after the discovery grace so peers' servers are up before probes begin.
+        Boots the node, then starts the SWIM gossip loop. The loop starts *after* model
+        loading so its probes don't race the GIL-heavy torch load (which would cause
+        spurious SUSPECTs at boot); failure detection is driven by the loop's ``on_dead``
+        callback.
         """
         self._discover_topology()
-        threading.Thread(target=self.loop.run, args=(0.1,), daemon=True).start()
         if self.role is NodeRole.LEADER:
             self._become_leader()
         else:
             self._load_experts()
             self._declare_rejoin()
+        threading.Thread(target=self.loop.run, args=(0.1,), daemon=True).start()
 
     def _discover_topology(self, grace_seconds: float = 5.0) -> None:
         """Learn the current leader by probing peers, demoting self if the cluster moved on.
