@@ -51,12 +51,12 @@ The five-device testbed is final validation (Phase 7), not the development loop.
 | Loading cost | `mixup_core.cost` |
 | Placement optimization | `mixup_core.placement` (trace-driven local search) |
 | `P_offload` | `mixup_node.memory` retention score |
-| Next-layer prediction | `mixup_node.predictor` (frequency/Markov baseline, MLP optional) |
+| Next-layer prediction | `mixup_node.predictor` (frequency + LR baseline, 2-layer MLP) |
 | `θ_pre` prefetch | `mixup_node.memory` (GPU/CPU variants) |
 | Eviction score | `mixup_node.memory` |
 | Error correction | replica / blocking-load fallback (no expert substitution) |
 | Two timescales | coarse placement loop + fine per-token residency |
-| Fault tolerance | replicas, quorum, token commit log |
+| Fault tolerance | replicas, commit quorum (majority-ack token log); SWIM+epoch election |
 
 ## Phases
 
@@ -70,8 +70,10 @@ The five-device testbed is final validation (Phase 7), not the development loop.
 - **Phase 3** — tiered residency, offload, prefetch, eviction. Gate: constrained budgets,
   no OOM, prefetch hit rate measured.
 - **Phase 4** — dynamic placement, replica promotion, double failure, rejoin.
-- **Phase 5** — quorum election + commit-before-emit.
-- **Phase 6** — predictor MLP (go/no-go).
+- **Phase 5** — commit-before-emit via a **commit quorum** (majority-ack token log); keep the
+  SWIM+epoch election (no Raft terms/votes, no log compaction).
+- **Phase 6** — next-layer expert predictor: frequency baseline + logistic regression +
+  2-layer MLP, offline-trained on traces; go/no-go on the MLP.
 - **Phase 7** — deployment to the real testbed (deferred).
 
 ## Definition of done (every phase)
@@ -86,10 +88,34 @@ note. No phase merges on "works on my laptop".
   the text-consistent form (more free memory → lower threshold) and test monotonicity.
 - CoMoE's next-layer predictor assumes the next layer's input is available; in a
   decoder-only model layer `l+1`'s router input depends on layer `l`'s expert output.
-  Predictor accuracy is therefore an empirical question; the baseline is frequency/Markov.
+  Predictor accuracy is therefore an empirical question; the baseline is frequency/LR.
 - Granite 1B-A400M is ~2.6 GB; all five devices fit it in RAM, so real offload pressure is
   created with configurable budgets. The simulator includes larger synthetic MoE models for
   the scaling story.
+
+## Phase 5 design decision: commit quorum, not Raft election
+
+We keep the **SWIM + epoch election** for *who becomes leader* (it is total-ordered,
+tested, and split-brain-free for crash-stop failures). For *when a token is safe to emit*
+we add a **commit quorum**: a monotonic committed watermark + majority-ack (3 of 5) before
+emission, and resume-from-last-committed on failover. This gives "no committed token lost"
+and "no split-brain emission" (a partitioned minority can't reach a majority) without Raft
+terms, candidate votes, or log compaction. A full quorum *election* is only warranted if we
+also want partition-safe *compute*, which we don't for the fixed-roster lab.
+
+## Predictor status (Phase 6, not started)
+
+The consumers (`eviction_score`, `prefetch_threshold`) and the raw material
+(`ActivationStats.counts`/`samples`, `mixup-trace` top-k) exist, but no predictor does:
+
+- no `predictor.py` interface;
+- no LR (logistic-regression baseline) or NN (CoMoE 2-layer MLP);
+- no hidden-state capture (`mixup-trace` records only top-k indices, not `h_t`);
+- no layer-l→l+1 transitions (Markov);
+- no training/eval harness (top-1/top-3 vs frequency baseline).
+
+Unblock order: (1) hidden-state capture in `mixup-trace`; (2) frequency + LR baseline;
+(3) the MLP; (4) eval that decides whether the MLP earns its cost.
 
 ## Findings so far (Phase 0)
 
