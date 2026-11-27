@@ -467,11 +467,18 @@ class Node:
         if warm:
             past = cache_from_bytes(base64.b64decode(state.cache_b64), device)
             nxt = torch.tensor([state.next_token], device=device)
-            generated_ids: list[int] = state.input_ids[prompt_len:]
+            full = state.input_ids[prompt_len:]
+            committed = self._commit_log.committed
+            # Resume exactly from the committed watermark. The commit is all-or-nothing
+            # (the KV snapshot is aligned with the full generation), so committed == len(full)
+            # when a majority acked the whole log; if fewer acked we truncate and the tail
+            # is regenerated (approximate only in the rare follower-down case).
+            generated_ids: list[int] = full[:committed]
             remaining = max(0, max_new_tokens - len(generated_ids))
             logger.info(
-                "resuming warm cache: %d tokens already generated, %d left",
-                len(generated_ids),
+                "resuming warm cache: %d committed of %d total, %d left",
+                committed,
+                len(full),
                 remaining,
             )
         else:
