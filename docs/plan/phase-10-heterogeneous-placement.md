@@ -157,12 +157,12 @@ note. No phase merges on "works on my laptop".
 
 ## Known issues (Phase 4)
 
-- **Expert rejoin (restarting a killed node) is partially fixed but still flaky.** The
-  revival itself works now (a restarted node's higher incarnation revives it via
-  `_merge_peer`), and a boot grace period + longer timeouts eliminated spurious SUSPECT/
-  DEAD at boot. What remains is a **routing-propagation race**: under a concurrent
-  failover + rejoin, the leader's view, its dispatcher table, and a peer's expert group
-  can diverge (the view advances to a newer epoch that the peer's expert group never
-  applies, so coverage/ownership silently desyncs and generation degrades). Failover
-  (kill → promote backups) is solid; rejoin needs the routing adoption to be made
-  consistent across view + dispatcher + every peer's expert group.
+- **Expert rejoin is fixed for correctness; a residual performance quirk remains.** The
+  revival (higher-incarnation), boot grace period, longer timeouts, and **atomic routing
+  adoption** (view + dispatcher updated together under the engine lock) now keep the
+  leader's dispatcher consistent with its view, so generation is correct after a rejoin.
+  What remains: a node *reloading experts* (a multi-second torch load) can still be
+  falsely marked DEAD ~50s after boot, which triggers a needless failover that over-loads
+  the leader (exceeding its budget) and leaves the peer holding stale, unused experts
+  until the next replan. This is a placement-quality/memory issue, not a correctness one.
+  Failover (kill → promote backups) is solid; rejoin produces correct output.
