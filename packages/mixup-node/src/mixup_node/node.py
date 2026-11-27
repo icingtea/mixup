@@ -28,6 +28,7 @@ from mixup_core.gossip import Ack, Alive, apply_gossip, decode_gossip, encode_go
 from mixup_core.gossip_engine import GossipEngine
 from mixup_core.kvledger import KvState, decode_kv_state, encode_kv_state
 from mixup_core.planner import plan_routing
+from mixup_core.predictor import PredictorState
 from mixup_core.replica import failover_with_backups, plan_backups
 from mixup_core.runtime import ClusterView, RoutingTable
 from mixup_core.scheduler import (
@@ -45,6 +46,7 @@ from .memory import TieredExpertStore
 from .metrics import MetricsCollector
 from .model import ExpertGroup, load_central
 from .monitor import ResourceMonitor
+from .predictor import LRPredictor, MLPPredictor
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +143,9 @@ class Node:
         self._commit: CommitTracker | None = None  # leader's commit quorum (Phase 5)
         self._next_replan_at = REPLAN_MIN_TOKENS  # token count for the next re-plan
         self.monitor = ResourceMonitor()  # live CPU/memory/GPU sampling
+        self.predictor = None  # leader's next-layer predictor (Phase 6)
+        self._predictor_version = 0  # version for predictor weight sync (Phase 6)
+        self._predictor_state: PredictorState | None = None  # last synced (follower)
 
     # -- control loop ------------------------------------------------------
 
@@ -221,8 +226,18 @@ class Node:
         self._trace = TraceBuffer(
             self.model_config.num_hidden_layers, self.model_config.num_local_experts or 0
         )
+        # Phase 6: the leader trains a next-layer predictor online and syncs its weights.
+        num_experts = self.model_config.num_local_experts or 0
+        feature_dim = self.model_config.hidden_size + num_experts + 1
+        self.predictor = self._make_predictor(feature_dim, num_experts)
+        self._predictor_version = 0
         self.dispatcher = Dispatcher(
-            self.name, view.routing, self._on_expert_failure, stats=self._trace
+            self.name,
+            view.routing,
+            self._on_expert_failure,
+            stats=self._trace,
+            predictor=self.predictor,
+            num_experts=num_experts,
         )
         self._announce_leader()
         self.model = load_central(self.model_config, MODEL_FILE, self.dispatcher)
@@ -250,6 +265,38 @@ class Node:
             store.set_routing(table)
             return store
         return ExpertGroup(self.name, self.model_config, MODEL_FILE, table)
+
+    def _make_predictor(self, feature_dim: int, num_experts: int):
+        """The leader's next-layer predictor (LR; the MLP did not beat it in eval)."""
+        return LRPredictor(feature_dim, num_experts)
+
+    def _sync_predictor(self) -> None:
+        """Broadcast the predictor weights to followers so a promoted leader resumes them."""
+        if self.predictor is None:
+            return
+        self._predictor_version += 1
+        payload = self.predictor.to_state(self._predictor_version).model_dump()
+        for name in self.engine.view.members:
+            if name == self.name:
+                continue
+            threading.Thread(
+                target=self._post_predictor, args=(name, payload), daemon=True
+            ).start()
+
+    def _post_predictor(self, name: str, payload: dict) -> None:
+        with contextlib.suppress(RequestException):
+            requests.post(f"{address(name)}/predictor", json=payload, timeout=5)
+
+    def store_predictor(self, body: dict) -> None:
+        """Store synced predictor weights (follower); freshest version wins."""
+        state = PredictorState.model_validate(body)
+        if self._predictor_state is not None and state.version <= self._predictor_state.version:
+            return
+        self._predictor_state = state
+        if state.kind == "lr":
+            self.predictor = LRPredictor.from_state(state)
+        elif state.kind == "mlp":
+            self.predictor = MLPPredictor.from_state(state)
 
     def _on_expert_failure(self, node: str) -> RoutingTable:
         def _fail(v: ClusterView) -> ClusterView:
@@ -511,6 +558,7 @@ class Node:
                         prompt_list + generated_ids,
                         max_new_tokens,
                     )
+                    self._sync_predictor()
                 generated_ids.append(nxt.item())
                 self._kv_seq += 1
                 self._bump_kv_seq(self._kv_seq)

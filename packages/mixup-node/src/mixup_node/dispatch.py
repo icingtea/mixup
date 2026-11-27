@@ -49,13 +49,19 @@ class Dispatcher:
         on_failure: Callable[[str], RoutingTable],
         max_retries: int = 2,
         stats: TraceBuffer | None = None,
+        predictor: object | None = None,
+        num_experts: int = 0,
     ) -> None:
         self.name = name
         self.table = table
         self.on_failure = on_failure  # (node) -> new RoutingTable (after rebalance)
         self.max_retries = max_retries
         self.stats = stats  # optional activation-statistics recorder (leader only)
+        self.predictor = predictor  # optional next-layer predictor (leader only)
+        self.num_experts = num_experts
         self._token_layers: list[list[int]] = []
+        self._prev_hidden: Tensor | None = None
+        self._prev_experts: list[int] = []
         self.expert_nodes = {entry.node_id for entry in table.assignment.values()}
         self._pool = ThreadPoolExecutor(max_workers=max(1, len(self.expert_nodes)))
         # A shared Session for the control path (/health polling), and one persistent
@@ -74,6 +80,8 @@ class Dispatcher:
     ) -> Tensor:
         if layer == 0:
             self._token += 1
+            self._prev_hidden = None
+            self._prev_experts = []
         # Record activation stats for *decode* tokens only (single-token shape (1, k)).
         # The prefill is batched (shape (prompt_len, k)) and would skew the per-token stats.
         if self.stats is not None and top_k_index.shape[0] == 1:
@@ -82,6 +90,18 @@ class Dispatcher:
             self._token_layers[layer] = top_k_index[0].tolist()
             if layer == self.stats.num_layers - 1:
                 self.stats.record(self._token_layers)
+        # Online-train the next-layer predictor (leader only): features = [h_l, one_hot(e_l)],
+        # label = the actual top-k at this layer (which is l+1 relative to the previous call).
+        if self.predictor is not None and top_k_index.shape[0] == 1:
+            cur_experts = top_k_index[0].tolist()
+            if self._prev_hidden is not None and self.num_experts > 0:
+                from .predictor import _labels, features
+
+                x = features(self._prev_hidden, self._prev_experts, self.num_experts)
+                y = _labels(cur_experts, self.num_experts)
+                self.predictor.update(x, y)
+            self._prev_hidden = hidden_states[0].detach()
+            self._prev_experts = cur_experts
         for _ in range(self.max_retries + 1):
             chosen = self._chosen(top_k_index)
             try:

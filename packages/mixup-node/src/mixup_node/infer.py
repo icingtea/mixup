@@ -64,6 +64,11 @@ def build_app(node: Node) -> FastAPI:
         acked = node.store_commit(data)
         return {"ok": True, "acked": acked}
 
+    @app.post("/predictor")
+    async def predictor(request: Request) -> dict:
+        node.store_predictor(await request.json())
+        return {"ok": True}
+
     @app.post("/leader")
     async def leader_announce(request: Request) -> dict:
         data = await request.json()
