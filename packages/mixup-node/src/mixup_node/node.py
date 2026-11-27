@@ -255,6 +255,11 @@ class Node:
             return None
         view = self.engine.view
         assert view.routing is not None
+        budgets = {
+            n: p.expert_budget_bytes
+            for n, p in self.env.profiles.items()
+            if p.expert_budget_bytes is not None
+        } or None
         try:
             new_table = plan_routing(
                 self.env.profiles,
@@ -262,6 +267,7 @@ class Node:
                 rtt_ms={n: 0.0 for n in self.env.profiles},  # TODO(phase 4): measure RTT
                 leader=self.name,
                 prev_table=view.routing,
+                budget_bytes=budgets,
             )
         except ValueError as exc:
             logger.warning("%s: replan skipped: %s", self.name, exc)

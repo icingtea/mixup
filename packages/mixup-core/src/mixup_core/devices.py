@@ -58,6 +58,12 @@ class DeviceProfile(BaseModel):
     # memory tiers
     ram_bytes: int = 0
     vram_bytes: int | None = None
+    expert_budget_bytes: int | None = None
+    """Bytes of expert weights this node is allowed to hold (placement memory budget).
+
+    ``None`` = unbounded (derive from vram/ram in the planner). Set explicitly to emulate
+    a memory-constrained device or reserve headroom for the dense model.
+    """
 
     # storage / interconnect
     disk_read_mbps: float = 100.0

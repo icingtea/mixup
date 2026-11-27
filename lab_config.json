@@ -18,6 +18,7 @@
       "expert_per_ms": 0.038,
       "ram_bytes": 32740552704,
       "vram_bytes": 8082096128,
+      "expert_budget_bytes": 604000000,
       "disk_read_mbps": 1057.0
     },
     "container_2": {

@@ -110,3 +110,12 @@ note. No phase merges on "works on my laptop".
 - Kill the GPU leader → a CPU node is promoted, keeps its 16 experts (leader-as-owner,
   no shedding), loads the dense model on CPU, and keeps generating correctly
   (slowly, as expected). This validates CPU-as-leader and leader-as-owner end-to-end.
+
+## Phase 2 validation (single machine, emulated)
+
+- The leader records activation stats from the router (skipping the batched prefill) and,
+  after `REPLAN_MIN_TOKENS` (50), re-places experts via `plan_routing` with a memory
+  budget: the 8 hottest experts move to the GPU leader (capped at 604 MB), the rest stay on
+  the two CPU nodes (8 / 12 / 12). Post-replan generation is correct and faster, and the
+  leader loads its 8 experts on the fly (leader-as-owner). Churn is amortized over the
+  placement horizon so the optimizer will actually move experts.
