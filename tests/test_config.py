@@ -30,9 +30,11 @@ def test_duplicate_expert_rejected() -> None:
         _config(experts={"container_2": [0, 1], "container_3": [1, 2]})
 
 
-def test_leader_cannot_hold_experts() -> None:
-    with pytest.raises(ValidationError):
-        _config(experts={"container_1": [0, 1], "container_2": [2, 3]})
+def test_leader_may_hold_experts() -> None:
+    # Leader-as-owner (Phase 1): the initial leader may also serve experts.
+    config = _config(experts={"container_1": [0, 1], "container_2": [2, 3]})
+    assert config.initial_role("container_1") is NodeRole.LEADER
+    assert config.experts["container_1"] == [0, 1]
 
 
 def test_load_startup_config(tmp_path: Path) -> None:
@@ -43,6 +45,17 @@ def test_load_startup_config(tmp_path: Path) -> None:
     config = load_startup_config(path)
     assert config.initial_leader == "c1"
     assert config.nodes == ["c1", "c2"]
+    assert config.experts == {"c2": [0, 1]}
+
+
+def test_load_startup_config_from_lab_config(tmp_path: Path) -> None:
+    path = tmp_path / "lab_config.json"
+    path.write_text(
+        '{"startup": {"initial_leader": "c1", "nodes": ["c1", "c2"], '
+        '"experts": {"c2": [0, 1]}}, "profiles": {}, "specs": {}}'
+    )
+    config = load_startup_config(path)
+    assert config.initial_leader == "c1"
     assert config.experts == {"c2": [0, 1]}
 
 

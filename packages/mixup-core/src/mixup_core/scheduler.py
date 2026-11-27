@@ -10,7 +10,7 @@ from typing import Protocol
 
 from .gossip import Dead, apply_gossip
 from .runtime import ClusterView, RoutingEntry, RoutingTable
-from .types import ExpertId, MemberStatus, NodeId, NodeRole
+from .types import ExpertId, MemberStatus, NodeId
 
 
 class PlacementPolicy(Protocol):
@@ -25,14 +25,11 @@ class PlacementPolicy(Protocol):
 
 
 class LeastLoadedPolicy:
-    """Re-place experts onto the least-loaded alive expert node (the v1 failover default)."""
+    """Re-place experts onto the least-loaded alive node (leader-as-owner: every node is an
+    eligible owner)."""
 
     def place(self, view: ClusterView, experts: list[ExpertId]) -> dict[ExpertId, NodeId]:
-        alive = [
-            m
-            for m in view.members.values()
-            if m.status == MemberStatus.ALIVE and m.role == NodeRole.EXPERT
-        ]
+        alive = [m for m in view.members.values() if m.status == MemberStatus.ALIVE]
         if not experts or not alive:
             return {}
 
@@ -49,15 +46,12 @@ class LeastLoadedPolicy:
         return result
 
 
-def _alive_expert_ids(view: ClusterView) -> set[NodeId]:
-    return {
-        m.node_id
-        for m in view.members.values()
-        if m.status == MemberStatus.ALIVE and m.role == NodeRole.EXPERT
-    }
+def alive_owners(view: ClusterView) -> set[NodeId]:
+    """Alive nodes eligible to own experts (leader-as-owner: any alive node)."""
+    return {m.node_id for m in view.members.values() if m.status == MemberStatus.ALIVE}
 
 
-def _finalize(placed: dict[ExpertId, NodeId], epoch: int) -> RoutingTable:
+def finalize(placed: dict[ExpertId, NodeId], epoch: int) -> RoutingTable:
     """Derive each node's local slots from its sorted owned list."""
     by_node: dict[NodeId, list[ExpertId]] = {}
     for expert, node in placed.items():
@@ -81,7 +75,7 @@ def rebalance_experts(
     ``policy``, then derives each node's local slots from its sorted owned list and bumps
     the epoch.
     """
-    alive = _alive_expert_ids(view)
+    alive = alive_owners(view)
 
     kept: dict[ExpertId, NodeId] = {}
     for expert, entry in prev.assignment.items():
@@ -91,7 +85,7 @@ def rebalance_experts(
     unowned = [expert for expert in prev.assignment if expert not in kept]
     placed = policy.place(view, unowned)
 
-    return _finalize({**kept, **placed}, prev.epoch + 1)
+    return finalize({**kept, **placed}, prev.epoch + 1)
 
 
 def balance_experts(
@@ -106,7 +100,7 @@ def balance_experts(
     others shed some of theirs.
     """
     placed = (policy or LeastLoadedPolicy()).place(view, sorted(prev.assignment))
-    return _finalize(placed, prev.epoch + 1)
+    return finalize(placed, prev.epoch + 1)
 
 
 def handle_node_failure(

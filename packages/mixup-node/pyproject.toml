@@ -20,6 +20,8 @@ dependencies = [
 
 [project.scripts]
 mixup-node = "mixup_node.infer:start"
+mixup-bench = "mixup_node.bench:main"
+mixup-trace = "mixup_node.trace:main"
 
 [tool.uv.sources]
 mixup-core = { workspace = true }

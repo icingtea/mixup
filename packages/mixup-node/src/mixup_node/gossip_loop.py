@@ -37,6 +37,7 @@ class GossipLoop:
         choose_peer: ChoosePeer | None = None,
         on_dead: Callable[[NodeId], None] | None = None,
         clock: Clock = time.monotonic,
+        grace_seconds: float = 15.0,
     ) -> None:
         self.engine = engine
         self.gossip_interval = gossip_interval
@@ -47,6 +48,8 @@ class GossipLoop:
         self._choose_peer = choose_peer if choose_peer is not None else self._default_peer
         self._on_dead = on_dead
         self._clock = clock
+        self.grace_seconds = grace_seconds
+        self._grace_until = 0.0
 
         # peer -> next time to advance its probe state
         self._pending: dict[NodeId, float] = {}
@@ -74,6 +77,12 @@ class GossipLoop:
                 self._send(peer, encode_gossip(ping))
 
     def _process_timeouts(self, now: float) -> None:
+        if now < self._grace_until:
+            # During the boot grace period, don't advance SUSPECT/DEAD: a peer still
+            # loading its model may be slow to ACK (GIL-heavy torch load), and a spurious
+            # DEAD would trigger an unnecessary failover. Just clear pending and re-probe.
+            self._pending.clear()
+            return
         for peer in [p for p, t in self._pending.items() if now >= t]:
             action, msg = self.engine.on_timeout(peer, now)
             if action is Action.PINGREQ:
@@ -108,7 +117,10 @@ class GossipLoop:
 
     def run(self, interval: float) -> None:
         """Block forever, ticking on the real clock every ``interval`` seconds."""
-        logger.info("gossip loop started (interval=%.2fs)", interval)
+        self._grace_until = self._clock() + self.grace_seconds
+        logger.info(
+            "gossip loop started (interval=%.2fs, grace=%.1fs)", interval, self.grace_seconds
+        )
         while True:
             self.tick(self._clock())
             time.sleep(interval)

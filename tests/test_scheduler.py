@@ -120,9 +120,10 @@ def test_handle_node_failure_rebalances() -> None:
     assert out.members["n1"].status is MemberStatus.DEAD
     assert out.routing is not None
     assert set(out.routing.assignment) == {0, 1, 2}  # coverage preserved
-    assert out.routing.assignment[0].node_id == "n2"  # orphaned experts moved
+    # Orphans (0, 1) re-place to the least-loaded alive nodes; the leader is eligible now.
+    assert out.routing.assignment[0].node_id == "leader"  # least-loaded, tie-break first
     assert out.routing.assignment[1].node_id == "n2"
-    assert out.routing.assignment[2].node_id == "n2"
+    assert out.routing.assignment[2].node_id == "n2"  # kept (owner alive)
     assert out.routing.epoch == view.routing.epoch + 1
 
 

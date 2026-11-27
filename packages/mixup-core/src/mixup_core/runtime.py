@@ -48,6 +48,9 @@ class RoutingEntry(BaseModel):
     slot: int
     """The expert's local slot index on that node."""
 
+    backup: NodeId | None = None
+    """The node that backs this expert up (takes over on primary failure)."""
+
 
 class RoutingTable(BaseModel):
     """The versioned ``ExpertId -> RoutingEntry`` map (the live LUT).
@@ -68,7 +71,9 @@ class RoutingTable(BaseModel):
 
     def _canonical(self) -> str:
         """A deterministic, order-independent serialization used only as a tie-break."""
-        items = (f"{e}:{r.node_id}:{r.slot}" for e, r in sorted(self.assignment.items()))
+        items = (
+            f"{e}:{r.node_id}:{r.slot}:{r.backup}" for e, r in sorted(self.assignment.items())
+        )
         return ",".join(items)
 
 

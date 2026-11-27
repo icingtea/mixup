@@ -6,7 +6,7 @@ nodes depend on, so it stays free of torch/docker/fastapi: pure pydantic.
 
 from enum import StrEnum
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, field_validator
 
 ContainerName = str
 """A node's name, which is also its hostname on the Docker network, e.g. "container_2"."""
@@ -75,6 +75,13 @@ class StartupConfig(BaseModel):
     kv_sync_every: int = 5
     """How often (in generated tokens) the leader broadcasts its warm KV cache to peers."""
 
+    predictor_kind: str = "mlp"
+    """The next-layer predictor to train: ``"lr"`` (logistic regression) or ``"mlp"``
+    (CoMoE's 2-layer MLP, the default)."""
+
+    max_new_tokens: int = 500
+    """Default generation length when a client doesn't specify one."""
+
     @field_validator("experts")
     @classmethod
     def _experts_unique(cls, value: ExpertAlloc) -> ExpertAlloc:
@@ -87,13 +94,6 @@ class StartupConfig(BaseModel):
                 seen.add(expert)
         return value
 
-    @model_validator(mode="after")
-    def _leader_not_expert(self) -> "StartupConfig":
-        """The leader holds everything except the experts, so it holds none."""
-        if self.initial_leader in self.experts:
-            raise ValueError(f"leader {self.initial_leader!r} is also an expert node")
-        return self
-
     def initial_role(self, name: ContainerName) -> NodeRole:
         """The role `name` starts in."""
         return NodeRole.LEADER if name == self.initial_leader else NodeRole.EXPERT
@@ -103,7 +103,7 @@ class GenerateRequest(BaseModel):
     """A generation request sent to the leader's ``POST /generate``."""
 
     prompt: str
-    max_new_tokens: int = 50
+    max_new_tokens: int = 500
 
 
 class GenerateResponse(BaseModel):

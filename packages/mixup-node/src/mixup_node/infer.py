@@ -14,16 +14,18 @@ from collections.abc import Callable
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 from transformers import GraniteMoeConfig
 
 from mixup_core.constants import EXPERT_PORT, INTERNAL_PORT, MODEL_DIR
 from mixup_core.election import leader_projection
 from mixup_core.env import load_node_env
 from mixup_core.logging_config import configure_logging
-from mixup_core.runtime import RoutingTable
+from mixup_core.runtime import ClusterView, RoutingTable
 from mixup_core.topology import cluster_view_from_config, validate_partition
 from mixup_core.types import GenerateRequest, GenerateResponse
 
+from .memory import TieredExpertStore
 from .node import Node
 from .serialization import ExpertRequest, ExpertResponse
 from .transport import TCPServer
@@ -57,6 +59,25 @@ def build_app(node: Node) -> FastAPI:
         node.store_kv(await request.body())
         return {"ok": True}
 
+    @app.post("/commit")
+    async def commit(request: Request) -> dict:
+        data = await request.json()
+        acked = node.store_commit(data)
+        return {"ok": True, "acked": acked}
+
+    @app.post("/predictor")
+    async def predictor(request: Request) -> dict:
+        node.store_predictor(await request.json())
+        return {"ok": True}
+
+    @app.get("/predictor")
+    async def predictor_info() -> dict:
+        return node.predictor_info()
+
+    @app.get("/experts")
+    async def expert_stats() -> dict:
+        return node.expert_stats()
+
     @app.post("/leader")
     async def leader_announce(request: Request) -> dict:
         data = await request.json()
@@ -66,18 +87,86 @@ def build_app(node: Node) -> FastAPI:
     @app.post("/routing")
     async def routing(request: Request) -> dict:
         table = RoutingTable.model_validate(await request.json())
+        # Adopt atomically: the view is updated under the engine lock, so a stale table
+        # (older epoch) can never overwrite a newer one.
+        if not node.engine.adopt_routing(table):
+            logger.info("routing: ignoring stale table epoch=%d", table.epoch)
+            return {"ok": True, "stale": True}
         if node.expert_group is not None:
             logger.info("routing: received table epoch=%d", table.epoch)
-            node.expert_group.set_routing(table)
+            # The expert reload is GIL-heavy and would block the event loop (and thus the
+            # /gossip ping acks) if run here; offload it so failure detection stays live.
+            await run_in_threadpool(node.expert_group.set_routing, table)
         return {"ok": True}
+
+    @app.get("/routing")
+    async def get_routing() -> dict:
+        table = node.engine.view.routing
+        if table is None:
+            return {"epoch": None, "assignment": {}}
+        return {
+            "epoch": table.epoch,
+            "assignment": {
+                str(e): {"node": r.node_id, "slot": r.slot, "backup": r.backup}
+                for e, r in table.assignment.items()
+            },
+        }
 
     @app.post("/join")
     async def join(request: Request) -> dict:
         if node.model is None:
             raise HTTPException(status_code=503, detail="not the leader")
         data = await request.json()
-        node.rejoin(data["node_id"])
+        # rejoin rebalances + reloads experts (GIL-heavy); offload so /gossip stays live.
+        await run_in_threadpool(node.rejoin, data["node_id"], data.get("incarnation"))
         return {"ok": True}
+
+    @app.post("/replan")
+    async def replan() -> dict:
+        if node.model is None:
+            raise HTTPException(status_code=503, detail="not the leader")
+        table = await run_in_threadpool(node.replan)
+        return {"ok": True, "epoch": table.epoch if table else None}
+
+    @app.get("/stats")
+    async def stats() -> dict:
+        if node._trace is None:
+            return {"total_tokens": 0}
+        return {"total_tokens": node._trace.tokens}
+
+    @app.get("/store")
+    async def store() -> dict:
+        group = node.expert_group
+        if group is None:
+            return {"type": "none"}
+        if isinstance(group, TieredExpertStore):
+            return {
+                "type": "tiered",
+                "owned": group.experts,
+                "resident": group.resident_experts(),
+                "execution_tier": group.execution_tier,
+            }
+        return {"type": "resident", "experts": group.experts}
+
+    @app.get("/metrics")
+    async def metrics() -> dict:
+        """Live resource perception: smoothed CPU/memory/GPU, profile, routing, stats."""
+        profile = node.env.profiles.get(node.name)
+        table = node.engine.view.routing
+        residency = None
+        if isinstance(node.expert_group, TieredExpertStore):
+            residency = node.expert_group.residency_info()
+        return {
+            "node": node.name,
+            "role": node.role.value,
+            "execution": profile.execution.value if profile else None,
+            "resources": node.monitor.snapshot(),
+            "profile": profile.model_dump() if profile else None,
+            "residency": residency,
+            "stats": {"total_tokens": node._trace.tokens if node._trace else 0},
+            "routing_epoch": table.epoch if table else None,
+            "owned_experts": node.expert_group.experts if node.expert_group else [],
+        }
 
     @app.post("/generate")
     def generate(request: GenerateRequest) -> dict:
@@ -106,6 +195,20 @@ def _expert_callback(node: Node) -> Callable[[bytes], bytes]:
             raise RuntimeError("not an expert node")
         server_start = time.perf_counter()
         req = ExpertRequest.from_bytes(payload[4:])
+        # Prefetch the predicted next-layer experts (Phase 3 + 6) while we compute this
+        # layer: the hint carries each candidate's activation probability, and the store
+        # applies the paper's ``θ_pre`` threshold (driven by resource stability + free
+        # memory) before deciding what to load.
+        if req.prefetch.numel() > 0 and isinstance(node.expert_group, TieredExpertStore):
+            nxt = layer + 1
+            if nxt < node.model_config.num_hidden_layers:
+                stability = node.monitor.snapshot().get("cpu_util_stability", 1.0)
+                probs = (
+                    req.prefetch_probs.tolist()
+                    if req.prefetch_probs.numel() == req.prefetch.numel()
+                    else None
+                )
+                node.expert_group.prefetch(nxt, req.prefetch.tolist(), probs, stability)
         out = node.expert_group.forward(
             layer, req.hidden_states, req.top_k_index, req.top_k_weights
         )
@@ -122,6 +225,16 @@ def start() -> None:
     model_config = _model_config()
     validate_partition(env.config, model_config.num_local_experts or 0)
     view = cluster_view_from_config(env.config)
+    # Fresh incarnation per boot (time-based): a restarted node is distinguishable from
+    # its prior self, so peers revive it instead of treating its revival as stale gossip.
+    me = view.members[env.container_name]
+    view = ClusterView(
+        members={
+            **view.members,
+            env.container_name: me.model_copy(update={"incarnation": int(time.time())}),
+        },
+        routing=view.routing,
+    )
 
     node = Node(env, model_config, view)
     logger.info("%s boot: role=%s", env.container_name, node.role.value)

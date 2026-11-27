@@ -1,0 +1,56 @@
+{
+  "startup": {
+    "initial_leader": "container_1",
+    "nodes": ["container_1", "container_2", "container_3"],
+    "experts": {
+      "container_2": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "container_3": [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+    },
+    "kv_sync_every": 5,
+    "predictor_kind": "mlp",
+    "max_new_tokens": 500
+  },
+  "profiles": {
+    "container_1": {
+      "node_id": "container_1",
+      "execution": "gpu",
+      "cpu_cores": 20,
+      "gpu_tflops": 31.0,
+      "expert_fixed_ms": 0.47,
+      "expert_per_ms": 0.038,
+      "ram_bytes": 32740552704,
+      "vram_bytes": 8082096128,
+      "expert_budget_bytes": 604000000,
+      "disk_read_mbps": 1057.0
+    },
+    "container_2": {
+      "node_id": "container_2",
+      "execution": "gpu",
+      "cpu_cores": 20,
+      "gpu_tflops": 31.0,
+      "expert_fixed_ms": 0.47,
+      "expert_per_ms": 0.038,
+      "ram_bytes": 32740552704,
+      "vram_bytes": 8082096128,
+      "expert_budget_bytes": 906000000,
+      "disk_read_mbps": 1057.0
+    },
+    "container_3": {
+      "node_id": "container_3",
+      "execution": "gpu",
+      "cpu_cores": 20,
+      "gpu_tflops": 31.0,
+      "expert_fixed_ms": 0.47,
+      "expert_per_ms": 0.038,
+      "ram_bytes": 32740552704,
+      "vram_bytes": 8082096128,
+      "expert_budget_bytes": 906000000,
+      "disk_read_mbps": 1057.0
+    }
+  },
+  "specs": {
+    "container_2": { "execution": "gpu", "memory_mb": 6144 },
+    "container_3": { "execution": "gpu", "memory_mb": 6144 }
+  },
+  "profile_mode": "hybrid"
+}

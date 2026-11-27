@@ -22,12 +22,34 @@ from torch import Tensor
 
 from mixup_core.constants import EXPERT_PORT, address
 from mixup_core.runtime import RoutingTable
+from mixup_core.stats import TraceBuffer
 
 from .metrics import MetricsCollector
 from .serialization import ExpertRequest, ExpertResponse
 from .transport import TCPConnection
 
 logger = logging.getLogger(__name__)
+
+RTT_ALPHA = 0.3
+"""EWMA weight for the measured per-node network RTT (dispatch round-trip minus server compute)."""
+
+COST_SAMPLE_LIMIT = 500
+"""Cap on retained (n_experts, server_ms) samples per node for the online cost fit."""
+
+
+def _fit_fixed_per(samples: list[tuple[int, float]]) -> tuple[float, float]:
+    """Least-squares fit of ``t(n) = fixed + per * n`` over ``(n, t_ms)`` samples."""
+    n = len(samples)
+    if n < 2:
+        return 0.0, 0.0
+    sx = sum(k for k, _ in samples)
+    sy = sum(t for _, t in samples)
+    sxx = sum(k * k for k, _ in samples)
+    sxy = sum(k * t for k, t in samples)
+    denom = n * sxx - sx * sx
+    per = (n * sxy - sx * sy) / denom if denom else 0.0
+    fixed = (sy - per * sx) / n if n else 0.0
+    return max(0.0, fixed), max(0.0, per)
 
 
 class _NodeFailure(Exception):
@@ -47,11 +69,20 @@ class Dispatcher:
         table: RoutingTable,
         on_failure: Callable[[str], RoutingTable],
         max_retries: int = 2,
+        stats: TraceBuffer | None = None,
+        predictor: object | None = None,
+        num_experts: int = 0,
     ) -> None:
         self.name = name
         self.table = table
         self.on_failure = on_failure  # (node) -> new RoutingTable (after rebalance)
         self.max_retries = max_retries
+        self.stats = stats  # optional activation-statistics recorder (leader only)
+        self.predictor = predictor  # optional next-layer predictor (leader only)
+        self.num_experts = num_experts
+        self._token_layers: list[list[int]] = []
+        self._prev_hidden: Tensor | None = None
+        self._prev_experts: list[int] = []
         self.expert_nodes = {entry.node_id for entry in table.assignment.values()}
         self._pool = ThreadPoolExecutor(max_workers=max(1, len(self.expert_nodes)))
         # A shared Session for the control path (/health polling), and one persistent
@@ -60,6 +91,8 @@ class Dispatcher:
         self._connections: dict[str, TCPConnection] = {}
         self.metrics: MetricsCollector | None = None
         self._token = 0  # increments each time layer 0 is dispatched (a new token)
+        self.rtt_ms: dict[str, float] = {}  # EWMA network RTT per node (ms)
+        self._cost_samples: dict[str, list[tuple[int, float]]] = {}  # (n_experts, server_ms)
 
     def __call__(
         self,
@@ -70,6 +103,30 @@ class Dispatcher:
     ) -> Tensor:
         if layer == 0:
             self._token += 1
+            self._prev_hidden = None
+            self._prev_experts = []
+        # Record activation stats for *decode* tokens only (single-token shape (1, k)).
+        # The prefill is batched (shape (prompt_len, k)) and would skew the per-token stats.
+        if self.stats is not None and top_k_index.shape[0] == 1:
+            if layer == 0:
+                self._token_layers = [[] for _ in range(self.stats.num_layers)]
+            self._token_layers[layer] = top_k_index[0].tolist()
+            if layer == self.stats.num_layers - 1:
+                self.stats.record(self._token_layers)
+        # Online-train the next-layer predictor (leader only): features = [h_l, one_hot(e_l)],
+        # label = the actual top-k at this layer (which is l+1 relative to the previous call).
+        if self.predictor is not None and top_k_index.shape[0] == 1:
+            cur_experts = top_k_index[0].tolist()
+            if self._prev_hidden is not None and self.num_experts > 0:
+                from .predictor import _labels, features
+
+                x = features(self._prev_hidden, self._prev_experts, self.num_experts)
+                y = _labels(cur_experts, self.num_experts)
+                probs = self.predictor.predict(x)
+                self.predictor.record_accuracy(probs, cur_experts)
+                self.predictor.update(x, y)
+            self._prev_hidden = hidden_states[0].detach()
+            self._prev_experts = cur_experts
         for _ in range(self.max_retries + 1):
             chosen = self._chosen(top_k_index)
             try:
@@ -81,6 +138,25 @@ class Dispatcher:
 
     def _chosen(self, top_k_index: Tensor) -> set[str]:
         return {self.table.assignment[e].node_id for e in top_k_index.flatten().tolist()}
+
+    def _prefetch_hint(
+        self, container: str, layer: int, hidden_states: Tensor, top_k_index: Tensor
+    ) -> tuple[list[int], list[float]]:
+        """Predict next-layer experts; return this node's owned ones with their probs.
+
+        Sends ``2 * top_k`` candidates (with their predicted activation probability) so the
+        node can apply ``θ_pre`` — under memory pressure it prefetches only the very top,
+        and with headroom it prefetches the full candidate set.
+        """
+        from .predictor import features
+
+        x = features(hidden_states[0], top_k_index[0].tolist(), self.num_experts)
+        probs = self.predictor.predict(x)  # [num_experts] probabilities for layer+1
+        owned = [e for e, r in self.table.assignment.items() if r.node_id == container]
+        ranked = sorted(owned, key=lambda e: -probs[e].item())
+        k = 2 * top_k_index.shape[1]
+        ids = ranked[:k]
+        return ids, [probs[e].item() for e in ids]
 
     def set_table(self, table: RoutingTable) -> None:
         """Adopt a new routing table (on failover or rejoin), refreshing the expert set."""
@@ -161,11 +237,21 @@ class Dispatcher:
         top_k_index: Tensor,
         top_k_weights: Tensor,
     ) -> Tensor:
+        # Prefetch hint (Phase 6): predict next-layer experts, filtered to this node's
+        # owned experts, so it can prefetch layer+1 while computing layer.
+        prefetch: list[int] = []
+        prefetch_probs: list[float] = []
+        if self.predictor is not None and top_k_index.shape[0] == 1:
+            prefetch, prefetch_probs = self._prefetch_hint(
+                container, layer, hidden_states, top_k_index
+            )
         serialize_start = time.perf_counter()
         body = ExpertRequest(
             hidden_states=hidden_states,
             top_k_index=top_k_index,
             top_k_weights=top_k_weights,
+            prefetch=torch.tensor(prefetch, dtype=torch.int64),
+            prefetch_probs=torch.tensor(prefetch_probs, dtype=torch.float32),
         ).to_bytes()
         serialize_time = time.perf_counter() - serialize_start
 
@@ -181,9 +267,38 @@ class Dispatcher:
 
         (server_time,) = struct.unpack(">d", reply[:8])
 
+        # Online telemetry (Phase 3/4): measure network RTT and record
+        # (n_experts, server_ms) per node for cost-model calibration. Decode-only
+        # (single-token) so the fit matches the cost model's "batch 1" semantics.
+        if top_k_index.shape[0] == 1:
+            n_experts = sum(
+                1
+                for e in top_k_index[0].tolist()
+                if self.table.assignment.get(e) is not None
+                and self.table.assignment[e].node_id == container
+            )
+            rtt = max(0.0, http_time - server_time) * 1000.0
+            prev = self.rtt_ms.get(container)
+            self.rtt_ms[container] = (
+                rtt if prev is None else RTT_ALPHA * rtt + (1.0 - RTT_ALPHA) * prev
+            )
+            samples = self._cost_samples.setdefault(container, [])
+            samples.append((n_experts, server_time * 1000.0))
+            if len(samples) > COST_SAMPLE_LIMIT:
+                del samples[: len(samples) - COST_SAMPLE_LIMIT]
+
         deserialize_start = time.perf_counter()
         out = ExpertResponse.from_bytes(reply[8:]).out
         deserialize_time = time.perf_counter() - deserialize_start
+
+        if torch.isnan(out).any() or torch.isinf(out).any():
+            logger.error(
+                "token %d layer %d <- %s returned NaN/inf (server=%.2fms)",
+                self._token,
+                layer,
+                container,
+                server_time * 1000,
+            )
 
         logger.debug(
             "token %d layer %d -> %s: rt=%.2fms "
@@ -235,6 +350,17 @@ class Dispatcher:
                     container,
                     timeout,
                 )
+
+    def cost_estimates(self, min_samples: int = 16) -> dict[str, tuple[float, float] | None]:
+        """Per-node ``(fixed_ms, per_ms)`` fitted from measured dispatch times.
+
+        Returns ``None`` for a node with fewer than ``min_samples`` samples, so the caller
+        falls back to its static profile.
+        """
+        return {
+            node: _fit_fixed_per(samples) if len(samples) >= min_samples else None
+            for node, samples in self._cost_samples.items()
+        }
 
     def close(self) -> None:
         """Release the worker pool, control session, and data-plane connections."""

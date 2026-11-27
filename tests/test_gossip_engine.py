@@ -154,3 +154,45 @@ def test_stale_incarnation_is_not_merged() -> None:
     engine.handle(Ping(node_id="b", incarnation=0, epoch=5, kv_seq=99), now=0.0)
     assert engine.view.members["b"].epoch == 0
     assert engine.view.members["b"].kv_seq == 0
+
+
+def test_higher_incarnation_revives_dead_peer() -> None:
+    engine = _engine()
+    engine.handle(Dead(node_id="b", incarnation=1, by_node="c"), now=0.0)
+    assert engine.view.members["b"].status is MemberStatus.DEAD
+    # b restarts with a fresh (higher) incarnation -> its Ping revives it.
+    engine.handle(Ping(node_id="b", incarnation=2, epoch=0, kv_seq=0), now=0.5)
+    assert engine.view.members["b"].status is MemberStatus.ALIVE
+    assert engine.view.members["b"].incarnation == 2
+
+
+def test_same_incarnation_does_not_revive_dead_peer() -> None:
+    engine = _engine()
+    engine.handle(Dead(node_id="b", incarnation=1, by_node="c"), now=0.0)
+    engine.handle(Ping(node_id="b", incarnation=1, epoch=0, kv_seq=0), now=0.5)
+    assert engine.view.members["b"].status is MemberStatus.DEAD
+
+
+def test_adopt_routing_adopts_newer_and_ignores_stale() -> None:
+    from mixup_core.runtime import RoutingEntry, RoutingTable
+
+    engine = _engine()
+    table = RoutingTable(
+        epoch=3, assignment={0: RoutingEntry(node_id="b", slot=0)}
+    )
+    assert engine.adopt_routing(table) is True
+    assert engine.view.routing is not None and engine.view.routing.epoch == 3
+
+    stale = RoutingTable(epoch=2, assignment={0: RoutingEntry(node_id="c", slot=0)})
+    assert engine.adopt_routing(stale) is False
+    assert engine.view.routing.epoch == 3  # unchanged
+
+
+def test_adopt_routing_runs_callback_under_lock() -> None:
+    from mixup_core.runtime import RoutingEntry, RoutingTable
+
+    engine = _engine()
+    seen: list[int] = []
+    table = RoutingTable(epoch=1, assignment={0: RoutingEntry(node_id="b", slot=0)})
+    assert engine.adopt_routing(table, on_adopted=lambda t: seen.append(t.epoch)) is True
+    assert seen == [1]
