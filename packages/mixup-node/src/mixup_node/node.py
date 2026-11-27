@@ -17,6 +17,7 @@ from requests.exceptions import RequestException
 from transformers import AutoTokenizer, GraniteMoeConfig, GraniteMoeForCausalLM
 
 from mixup_core.constants import MODEL_DIR, MODEL_FILE, address
+from mixup_core.devices import DeviceProfile, ProfileMode
 from mixup_core.election import (
     apply_leader_announcement,
     current_leader,
@@ -30,6 +31,7 @@ from mixup_core.kvledger import KvState, decode_kv_state, encode_kv_state
 from mixup_core.planner import plan_routing
 from mixup_core.predictor import PredictorState
 from mixup_core.replica import failover_with_backups, plan_backups
+from mixup_core.resource import heterogeneity
 from mixup_core.runtime import ClusterView, RoutingTable
 from mixup_core.scheduler import (
     LeastLoadedPolicy,
@@ -55,7 +57,7 @@ logger = logging.getLogger(__name__)
 # otherwise trigger an unnecessary failover.
 GOSSIP_INTERVAL = 0.5
 PING_TIMEOUT = 5.0
-SUSPECT_TIMEOUT = 10.0
+SUSPECT_TIMEOUT = 30.0
 INDIRECT_K = 2
 
 DEAD_REPROBE_INTERVAL = 5.0
@@ -371,6 +373,50 @@ class Node:
         broadcast_routing(self.engine.view, self.name)
         return True
 
+    def _effective_profiles(self) -> dict[str, DeviceProfile]:
+        """Profiles with online cost correction applied (per ``profile_mode``).
+
+        ``configured`` trusts the static profile; ``measured`` trusts the online fit;
+        ``hybrid`` blends the two (seeded from the profile, corrected toward the measured
+        fit). The fit comes from the dispatcher's measured ``(n_experts, server_ms)``
+        samples, which are exactly what ``expert_fixed_ms + n * expert_per_ms`` models.
+        """
+        if self.env.profile_mode is ProfileMode.CONFIGURED or self.dispatcher is None:
+            return self.env.profiles
+        measured = self.dispatcher.cost_estimates()
+        out: dict[str, DeviceProfile] = {}
+        for name, p in self.env.profiles.items():
+            fit = measured.get(name)
+            if fit is None:
+                out[name] = p
+                continue
+            fixed, per = fit
+            if self.env.profile_mode is ProfileMode.MEASURED:
+                fixed, per = max(0.0, fixed), max(0.0, per)
+            else:  # HYBRID: average of declared and measured
+                fixed = (p.expert_fixed_ms + max(0.0, fixed)) / 2.0
+                per = (p.expert_per_ms + max(0.0, per)) / 2.0
+            out[name] = p.model_copy(update={"expert_fixed_ms": fixed, "expert_per_ms": per})
+        return out
+
+    def _heterogeneity(self, profiles: dict[str, DeviceProfile]) -> dict[str, float]:
+        """Per-device heterogeneity ``H_d`` from the (corrected) profiles.
+
+        Each device contributes compute, serving latency, bandwidth, memory, and cores;
+        ``H_d`` is the mean normalized difference from its peers (0 = identical).
+        """
+        resources: dict[str, dict[str, float]] = {
+            name: {
+                "compute": float(p.gpu_tflops or p.cpu_gflops),
+                "latency": float(p.expert_per_ms),
+                "bandwidth": float(p.disk_read_mbps),
+                "memory": float(p.vram_bytes or p.ram_bytes),
+                "cores": float(p.cpu_cores),
+            }
+            for name, p in profiles.items()
+        }
+        return heterogeneity(resources)
+
     def replan(self) -> RoutingTable | None:
         """Recompute expert placement from observed activations + profiles (Phase 2).
 
@@ -397,13 +443,16 @@ class Node:
             if p.expert_budget_bytes is not None
         } or None
         try:
+            profiles = self._effective_profiles()
+            rtt_ms = dict(self.dispatcher.rtt_ms) if self.dispatcher else {}
             new_table = plan_routing(
-                self.env.profiles,
+                profiles,
                 stats,
-                rtt_ms={n: 0.0 for n in self.env.profiles},  # TODO(phase 4): measure RTT
+                rtt_ms={n: rtt_ms.get(n, 0.0) for n in profiles},
                 leader=self.name,
                 prev_table=view.routing,
                 budget_bytes=budgets,
+                heterogeneity=self._heterogeneity(profiles),
             )
         except ValueError as exc:
             logger.warning("%s: replan skipped: %s", self.name, exc)

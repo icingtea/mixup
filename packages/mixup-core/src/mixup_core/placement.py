@@ -92,6 +92,10 @@ class PlacementProblem:
 
     budget_bytes: dict[NodeId, int] | None = None
 
+    heterogeneity: dict[NodeId, float] = field(default_factory=dict)
+    """Per-node heterogeneity ``H_d`` (CoMoE §2.2.2), used for conservative tie-breaking
+    in the greedy seed: among nodes with equal placement cost, prefer the less-outlier one."""
+
     cost: CostModel = field(init=False)
 
     def __post_init__(self) -> None:
@@ -260,7 +264,12 @@ class FrequencyPolicy:
                 raise ValueError("placement infeasible: no node has remaining capacity")
             node = min(
                 candidates,
-                key=lambda n: (problem.profiles[n].expert_per_ms * (load[n] + masses[e]), n),
+                key=lambda n: (
+                    problem.profiles[n].expert_per_ms * (load[n] + masses[e]),
+                    # conservative tie-break: prefer the less-outlier device (lower H_d)
+                    problem.heterogeneity.get(n, 0.0),
+                    n,
+                ),
             )
             assignment[e] = node
             load[node] += masses[e]

@@ -46,5 +46,5 @@
     "container_2": { "execution": "cpu", "cpus": 4.0, "memory_mb": 6144 },
     "container_3": { "execution": "cpu", "cpus": 4.0, "memory_mb": 6144 }
   },
-  "profile_mode": "configured"
+  "profile_mode": "hybrid"
 }

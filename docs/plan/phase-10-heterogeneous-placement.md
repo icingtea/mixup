@@ -214,13 +214,37 @@ Unblock order: (1) hidden-state capture in `mixup-trace`; (2) frequency + LR bas
   top-3 0.78, MLP 0.34 / 0.69, frequency 0.18 / 0.59** — LR beats frequency ~2×; the MLP
   does not beat LR (the decoder caveat), so LR is the default.
 
-## Remaining (post-12h sprint)
+## Remaining
 
-- **Prefetch hint** (Phase 3 finish): the leader's predictor currently trains + syncs but
-  does not yet emit a next-layer prefetch hint to expert nodes; the `MemoryManager`
-  prefetch loop is unwired (scores exist, no proactive prefetch).
-- Live telemetry wiring (RTT into the cost model, online cost correction, `H_d` usage).
-- Phase 7 real-testbed deployment (tooling only; hardware required).
+- **Phase 7 real-testbed deployment** (tooling only; hardware required).
+
+## Completed telemetry wiring (post-12h)
+
+- **Prefetch hint** (Phase 3 finish): the leader emits a next-layer prefetch hint carrying
+  each candidate's predicted activation probability; the node applies `θ_pre =
+  θ_base / (stability · (1 + θ_mem · free_ratio))` before prefetching, and uses the
+  probabilities in `S_evict` (was a `0.0` placeholder). Exposed on `/metrics`
+  (`residency.prefetch_threshold`).
+- **RTT into the cost model**: the dispatcher measures per-node network RTT (expert
+  round-trip minus server compute, EWMA) and `replan` feeds it to `plan_routing` (was
+  `rtt_ms=0`).
+- **Online cost correction**: the dispatcher records `(n_experts, server_ms)` samples and
+  fits `expert_fixed_ms + n · expert_per_ms`; `replan` blends the fit with the static
+  profile per `profile_mode` (`hybrid` is now the lab default; `measured`/`configured`
+  also supported).
+- **`H_d` heterogeneity**: computed from the (corrected) profiles and used as a
+  conservative tie-breaker in the greedy placement seed (prefer the less-outlier device
+  when cost is tied).
+
+## Known residual (boot-time mutual death)
+
+The primary boot-race symptom — a fast CPU node demoting the GPU leader while it loads its
+dense model — is fixed by a longer suspect timeout (`SUSPECT_TIMEOUT` 10s → 30s): the GPU
+leader now stays leader. What remains: the boot-time rejoin rebalances trigger *simultaneous*
+expert reloads on every node, and a node mid-reload can miss gossip pings, briefly
+partitioning itself (a node ends up idle until the next replan). Root fix: make expert
+reload non-blocking for the gossip path (yield the GIL / background the load), a larger
+change tracked separately.
 
 ## Known issues (Phase 4)
 

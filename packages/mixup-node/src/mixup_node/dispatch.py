@@ -30,6 +30,27 @@ from .transport import TCPConnection
 
 logger = logging.getLogger(__name__)
 
+RTT_ALPHA = 0.3
+"""EWMA weight for the measured per-node network RTT (dispatch round-trip minus server compute)."""
+
+COST_SAMPLE_LIMIT = 500
+"""Cap on retained (n_experts, server_ms) samples per node for the online cost fit."""
+
+
+def _fit_fixed_per(samples: list[tuple[int, float]]) -> tuple[float, float]:
+    """Least-squares fit of ``t(n) = fixed + per * n`` over ``(n, t_ms)`` samples."""
+    n = len(samples)
+    if n < 2:
+        return 0.0, 0.0
+    sx = sum(k for k, _ in samples)
+    sy = sum(t for _, t in samples)
+    sxx = sum(k * k for k, _ in samples)
+    sxy = sum(k * t for k, t in samples)
+    denom = n * sxx - sx * sx
+    per = (n * sxy - sx * sy) / denom if denom else 0.0
+    fixed = (sy - per * sx) / n if n else 0.0
+    return max(0.0, fixed), max(0.0, per)
+
 
 class _NodeFailure(Exception):
     """Raised when an expert node is unreachable; carries the node name."""
@@ -70,6 +91,8 @@ class Dispatcher:
         self._connections: dict[str, TCPConnection] = {}
         self.metrics: MetricsCollector | None = None
         self._token = 0  # increments each time layer 0 is dispatched (a new token)
+        self.rtt_ms: dict[str, float] = {}  # EWMA network RTT per node (ms)
+        self._cost_samples: dict[str, list[tuple[int, float]]] = {}  # (n_experts, server_ms)
 
     def __call__(
         self,
@@ -244,6 +267,26 @@ class Dispatcher:
 
         (server_time,) = struct.unpack(">d", reply[:8])
 
+        # Online telemetry (Phase 3/4): measure network RTT and record
+        # (n_experts, server_ms) per node for cost-model calibration. Decode-only
+        # (single-token) so the fit matches the cost model's "batch 1" semantics.
+        if top_k_index.shape[0] == 1:
+            n_experts = sum(
+                1
+                for e in top_k_index[0].tolist()
+                if self.table.assignment.get(e) is not None
+                and self.table.assignment[e].node_id == container
+            )
+            rtt = max(0.0, http_time - server_time) * 1000.0
+            prev = self.rtt_ms.get(container)
+            self.rtt_ms[container] = (
+                rtt if prev is None else RTT_ALPHA * rtt + (1.0 - RTT_ALPHA) * prev
+            )
+            samples = self._cost_samples.setdefault(container, [])
+            samples.append((n_experts, server_time * 1000.0))
+            if len(samples) > COST_SAMPLE_LIMIT:
+                del samples[: len(samples) - COST_SAMPLE_LIMIT]
+
         deserialize_start = time.perf_counter()
         out = ExpertResponse.from_bytes(reply[8:]).out
         deserialize_time = time.perf_counter() - deserialize_start
@@ -307,6 +350,17 @@ class Dispatcher:
                     container,
                     timeout,
                 )
+
+    def cost_estimates(self, min_samples: int = 16) -> dict[str, tuple[float, float] | None]:
+        """Per-node ``(fixed_ms, per_ms)`` fitted from measured dispatch times.
+
+        Returns ``None`` for a node with fewer than ``min_samples`` samples, so the caller
+        falls back to its static profile.
+        """
+        return {
+            node: _fit_fixed_per(samples) if len(samples) >= min_samples else None
+            for node, samples in self._cost_samples.items()
+        }
 
     def close(self) -> None:
         """Release the worker pool, control session, and data-plane connections."""

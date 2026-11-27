@@ -66,6 +66,38 @@ def test_frequency_puts_hot_expert_on_fast_node() -> None:
     assert a[3] == "fast"
 
 
+def test_frequency_heterogeneity_breaks_cost_ties() -> None:
+    stats = _stats(num_layers=2, num_experts=1)
+    profiles = {"a": _cpu("a", per=1.0), "b": _cpu("b", per=1.0)}
+    p = PlacementProblem(
+        num_experts=1,
+        profiles=profiles,
+        stats=stats,
+        rtt_ms={"a": 0.0, "b": 0.0},
+        leader="a",
+        heterogeneity={"a": 0.8, "b": 0.2},
+    )
+    # Identical latency, zero mass -> cost tied; the lower-H_d node wins the tie.
+    assert FrequencyPolicy().place(p) == {0: "b"}
+
+
+def test_frequency_heterogeneity_does_not_override_cost() -> None:
+    stats = _stats(num_layers=2, num_experts=1)
+    for _ in range(8):
+        stats.record([[0], [0]])  # expert 0 selected every layer -> positive mass
+    profiles = {"a": _cpu("a", per=0.1), "b": _cpu("b", per=1.0)}
+    p = PlacementProblem(
+        num_experts=1,
+        profiles=profiles,
+        stats=stats,
+        rtt_ms={"a": 0.0, "b": 0.0},
+        leader="a",
+        heterogeneity={"a": 0.9, "b": 0.0},  # a is the outlier but much faster
+    )
+    # H_d is only a tie-breaker: the faster node still wins despite higher H_d.
+    assert FrequencyPolicy().place(p) == {0: "a"}
+
+
 def test_frequency_is_deterministic() -> None:
     p = _problem()
     assert FrequencyPolicy().place(p) == FrequencyPolicy().place(p)
