@@ -201,6 +201,27 @@ Unblock order: (1) hidden-state capture in `mixup-trace`; (2) frequency + LR bas
 - Validated: killing an expert promotes its backups (8 → 13 experts on the leader) with
   full coverage (32) and correct generation.
 
+## Phase 5 (commit quorum) + Phase 6 (predictor) — done, lab-validated
+
+- **Phase 5**: `CommitLog`/`CommitTracker` (pure, tested) + node integration (append/ack/
+  replicate via `/commit`, resume-from-committed truncation). Validated: generation and
+  leader failover work end-to-end; no committed token is re-emitted (the resume truncates
+  to the majority-ack watermark).
+- **Phase 6**: `FrequencyPredictor` + `LRPredictor` + `MLPPredictor` (online binary-logit
+  SGD), trained on the leader during generation (the dispatcher predicts layer `l+1` from
+  layer `l`'s hidden state + experts, label = actual `l+1` top-k) and synced every
+  `kv_sync_every` tokens via `/predictor`. Eval on real generation: **LR top-1 0.39 /
+  top-3 0.78, MLP 0.34 / 0.69, frequency 0.18 / 0.59** — LR beats frequency ~2×; the MLP
+  does not beat LR (the decoder caveat), so LR is the default.
+
+## Remaining (post-12h sprint)
+
+- **Prefetch hint** (Phase 3 finish): the leader's predictor currently trains + syncs but
+  does not yet emit a next-layer prefetch hint to expert nodes; the `MemoryManager`
+  prefetch loop is unwired (scores exist, no proactive prefetch).
+- Live telemetry wiring (RTT into the cost model, online cost correction, `H_d` usage).
+- Phase 7 real-testbed deployment (tooling only; hardware required).
+
 ## Known issues (Phase 4)
 
 - **Expert rejoin is fixed for correctness; a residual performance quirk remains.** The
