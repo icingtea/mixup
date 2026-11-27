@@ -142,8 +142,8 @@ class Node:
 
         Boots the node, then starts the SWIM gossip loop. The loop starts *after* model
         loading so its probes don't race the GIL-heavy torch load (which would cause
-        spurious SUSPECTs at boot); failure detection is driven by the loop's ``on_dead``
-        callback.
+        spurious SUSPECTs at boot). A restarted node's revival doesn't depend on its own
+        loop timing: its fresh (higher) incarnation revives it on the peers' side.
         """
         self._discover_topology()
         if self.role == NodeRole.LEADER:
@@ -332,13 +332,18 @@ class Node:
         leader = current_leader(self.engine.view)
         if leader is None or leader == self.name:
             return
+        me = self.engine.view.members[self.name]
         try:
-            requests.post(f"{address(leader)}/join", json={"node_id": self.name}, timeout=5)
+            requests.post(
+                f"{address(leader)}/join",
+                json={"node_id": self.name, "incarnation": me.incarnation},
+                timeout=5,
+            )
             logger.info("%s: declared rejoin to leader %s", self.name, leader)
         except RequestException:
             logger.warning("%s: could not declare rejoin to %s", self.name, leader)
 
-    def rejoin(self, node_id: str) -> None:
+    def rejoin(self, node_id: str, incarnation: int | None = None) -> None:
         """A node announced it rejoined: mark it alive and give it a share of experts.
 
         With warm stats, re-place via the churn-aware planner (gives the rejoined node a
@@ -348,16 +353,14 @@ class Node:
         member = self.engine.view.members.get(node_id)
         if member is None:
             return
+        # Prefer the rejoining node's own (fresh) incarnation; fall back to bumping ours.
+        inc = incarnation if incarnation is not None else member.incarnation + 1
 
         if self._trace is not None and self._trace.tokens >= REPLAN_MIN_TOKENS:
             self.engine.mutate(
                 lambda v: apply_gossip(
                     v,
-                    Alive(
-                        node_id=node_id,
-                        incarnation=member.incarnation + 1,
-                        epoch=member.epoch,
-                    ),
+                    Alive(node_id=node_id, incarnation=inc, epoch=member.epoch),
                 )
             )
             if self.replan() is not None:
@@ -369,7 +372,7 @@ class Node:
         def _rebalance(v: ClusterView) -> ClusterView:
             v = apply_gossip(
                 v,
-                Alive(node_id=node_id, incarnation=member.incarnation + 1, epoch=member.epoch),
+                Alive(node_id=node_id, incarnation=inc, epoch=member.epoch),
             )
             if v.routing is not None:
                 new_table = balance_experts(v, v.routing, LeastLoadedPolicy())

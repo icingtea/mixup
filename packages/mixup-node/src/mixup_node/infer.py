@@ -99,7 +99,7 @@ def build_app(node: Node) -> FastAPI:
         if node.model is None:
             raise HTTPException(status_code=503, detail="not the leader")
         data = await request.json()
-        node.rejoin(data["node_id"])
+        node.rejoin(data["node_id"], data.get("incarnation"))
         return {"ok": True}
 
     @app.post("/replan")
