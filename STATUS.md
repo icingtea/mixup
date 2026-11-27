@@ -30,6 +30,11 @@ telemetry wirings.
   `kv_sync_every` tokens via `/predictor`, prefetch hint piggybacked on expert requests.
   Eval on real generation: **LR top-1 0.39 / top-3 0.78, MLP 0.34 / 0.69, frequency
   0.18 / 0.59** — LR wins; MLP does not beat LR (decoder caveat), so LR is the default.
+- **UI** — `mixup-web` (SvelteKit + Chart.js) replaces the Textual `mixup-tui`: chat +
+  node liveness/kill-start sidebar, per-node CPU/mem/GPU/RTT time series, expert
+  activation charts, predictor accuracy, summary, and a "no distribution" local-baseline
+  tab. The SvelteKit server aggregates the node APIs (one origin, no CORS) and proxies
+  `/generate` with failover.
 
 ## Remaining
 
@@ -59,6 +64,9 @@ curl localhost:9000/metrics   # live resource perception + profile + stats
 curl localhost:9000/routing   # expert -> {node, slot, backup}
 curl localhost:9000/store     # leader's own expert store
 curl -X POST localhost:9000/replan
+
+# web GUI (SvelteKit; replaces the Textual mixup-tui)
+cd apps/mixup-web && npm install && npm run dev   # http://127.0.0.1:5173
 ```
 
 Docker logs: `docker logs container_1` (leader) etc. Metrics ledger: `var/ledger/metrics_*.jsonl`.
