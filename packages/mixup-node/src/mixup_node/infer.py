@@ -24,6 +24,7 @@ from mixup_core.runtime import RoutingTable
 from mixup_core.topology import cluster_view_from_config, validate_partition
 from mixup_core.types import GenerateRequest, GenerateResponse
 
+from .memory import TieredExpertStore
 from .node import Node
 from .serialization import ExpertRequest, ExpertResponse
 from .transport import TCPServer
@@ -91,6 +92,20 @@ def build_app(node: Node) -> FastAPI:
         if node._trace is None:
             return {"total_tokens": 0}
         return {"total_tokens": node._trace.tokens}
+
+    @app.get("/store")
+    async def store() -> dict:
+        group = node.expert_group
+        if group is None:
+            return {"type": "none"}
+        if isinstance(group, TieredExpertStore):
+            return {
+                "type": "tiered",
+                "owned": group.experts,
+                "resident": group.resident_experts(),
+                "execution_tier": group.execution_tier,
+            }
+        return {"type": "resident", "experts": group.experts}
 
     @app.post("/generate")
     def generate(request: GenerateRequest) -> dict:

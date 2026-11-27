@@ -157,7 +157,9 @@ class TieredExpertStore:
         selected = top_k_index.flatten().tolist()
         weights = top_k_weights.flatten().to(device, self.dtype)
 
-        out = torch.zeros_like(hidden)
+        # Accumulate in fp32 (like the model's grouped_mm path, which sums in fp32 to
+        # avoid bf16 accumulation error); cast back to bf16 only at the wire boundary.
+        out = torch.zeros(hidden.shape, dtype=torch.float32, device=device)
         for pos, expert in enumerate(selected):
             if expert not in self.owned:
                 continue
@@ -165,7 +167,7 @@ class TieredExpertStore:
             gate, up = F.linear(hidden, w["gate_up"]).chunk(2, dim=-1)
             y = F.silu(gate) * up
             y = F.linear(y, w["down"])
-            out = out + y * weights[pos]
+            out += (y * weights[pos]).to(torch.float32)
         return out.to(torch.bfloat16)
 
     def resident_experts(self) -> int:

@@ -234,7 +234,9 @@ class Node:
         profile = self.env.profiles.get(self.name)
         budget = profile.expert_budget_bytes if profile is not None else None
         if budget is not None:
-            return TieredExpertStore(self.name, self.model_config, MODEL_FILE, profile, budget)
+            store = TieredExpertStore(self.name, self.model_config, MODEL_FILE, profile, budget)
+            store.set_routing(table)
+            return store
         return ExpertGroup(self.name, self.model_config, MODEL_FILE, table)
 
     def _on_expert_failure(self, node: str) -> RoutingTable:
