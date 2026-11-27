@@ -4,7 +4,6 @@ members = [
     "packages/mixup-node",
     "packages/mixup-orchestrator",
     "packages/mixup-repl",
-    "packages/mixup-gateway",
 ]
 
 [dependency-groups]
@@ -21,7 +20,6 @@ src = [
     "packages/mixup-node/src",
     "packages/mixup-orchestrator/src",
     "packages/mixup-repl/src",
-    "packages/mixup-gateway/src",
 ]
 extend-exclude = [".temp"]
 
