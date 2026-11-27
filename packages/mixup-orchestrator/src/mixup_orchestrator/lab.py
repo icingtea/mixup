@@ -14,13 +14,19 @@ import docker
 from docker.errors import NotFound
 from docker.types import DeviceRequest
 
-from mixup_core.constants import EXTERNAL_PORT_BASE, IMAGE_NAME, IMAGE_TAG, INTERNAL_PORT, NETWORK_NAME
+from mixup_core.constants import (
+    EXTERNAL_PORT_BASE,
+    IMAGE_NAME,
+    IMAGE_TAG,
+    INTERNAL_PORT,
+    NETWORK_NAME,
+)
 from mixup_core.devices import ExecutionType
 from mixup_core.env import NODE_ENV_VAR, NodeEnv, dump_node_env
 from mixup_core.lab import LabConfig
 from mixup_core.logging_config import configure_logging
 
-from .distribute import build_image, get_or_create_network
+from .distribute import get_or_create_network
 
 logger = logging.getLogger(__name__)
 
