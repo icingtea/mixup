@@ -20,7 +20,7 @@ from mixup_core.constants import EXPERT_PORT, INTERNAL_PORT, MODEL_DIR
 from mixup_core.election import leader_projection
 from mixup_core.env import load_node_env
 from mixup_core.logging_config import configure_logging
-from mixup_core.runtime import RoutingTable, apply_routing
+from mixup_core.runtime import ClusterView, RoutingTable, apply_routing
 from mixup_core.topology import cluster_view_from_config, validate_partition
 from mixup_core.types import GenerateRequest, GenerateResponse
 
@@ -172,6 +172,16 @@ def start() -> None:
     model_config = _model_config()
     validate_partition(env.config, model_config.num_local_experts or 0)
     view = cluster_view_from_config(env.config)
+    # Fresh incarnation per boot (time-based): a restarted node is distinguishable from
+    # its prior self, so peers revive it instead of treating its revival as stale gossip.
+    me = view.members[env.container_name]
+    view = ClusterView(
+        members={
+            **view.members,
+            env.container_name: me.model_copy(update={"incarnation": int(time.time())}),
+        },
+        routing=view.routing,
+    )
 
     node = Node(env, model_config, view)
     logger.info("%s boot: role=%s", env.container_name, node.role.value)
