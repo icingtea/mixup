@@ -79,6 +79,13 @@ def build_app(node: Node) -> FastAPI:
         node.rejoin(data["node_id"])
         return {"ok": True}
 
+    @app.post("/replan")
+    async def replan() -> dict:
+        if node.model is None:
+            raise HTTPException(status_code=503, detail="not the leader")
+        table = node.replan()
+        return {"ok": True, "epoch": table.epoch if table else None}
+
     @app.post("/generate")
     def generate(request: GenerateRequest) -> dict:
         if node.model is None:

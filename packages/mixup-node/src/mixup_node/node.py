@@ -26,12 +26,14 @@ from mixup_core.env import NodeEnv
 from mixup_core.gossip import Ack, Alive, apply_gossip, decode_gossip, encode_gossip
 from mixup_core.gossip_engine import GossipEngine
 from mixup_core.kvledger import KvState, decode_kv_state, encode_kv_state
+from mixup_core.planner import plan_routing
 from mixup_core.runtime import ClusterView, RoutingTable
 from mixup_core.scheduler import (
     LeastLoadedPolicy,
     balance_experts,
     handle_node_failure,
 )
+from mixup_core.stats import TraceBuffer
 from mixup_core.types import MemberStatus, NodeRole
 
 from .dispatch import Dispatcher
@@ -48,6 +50,9 @@ GOSSIP_INTERVAL = 0.5
 PING_TIMEOUT = 1.0
 SUSPECT_TIMEOUT = 2.0
 INDIRECT_K = 2
+
+REPLAN_MIN_TOKENS = 50
+"""Minimum observed tokens before the leader re-places experts from activation stats."""
 
 
 def broadcast_routing(view: ClusterView, by_node: str) -> None:
@@ -115,6 +120,7 @@ class Node:
         self._kv_seq = 0  # global monotonic token count (election freshness + dedup)
         self.kv_sync_every = env.config.kv_sync_every
         self._peer_idx = 0  # round-robin cursor for gossip peer selection
+        self._trace: TraceBuffer | None = None  # leader's activation stats (Phase 2)
 
     # -- control loop ------------------------------------------------------
 
@@ -189,7 +195,12 @@ class Node:
         assert view.routing is not None
         if self.expert_group is None:
             self.expert_group = ExpertGroup(self.name, self.model_config, MODEL_FILE, view.routing)
-        self.dispatcher = Dispatcher(self.name, view.routing, self._on_expert_failure)
+        self._trace = TraceBuffer(
+            self.model_config.num_hidden_layers, self.model_config.num_local_experts or 0
+        )
+        self.dispatcher = Dispatcher(
+            self.name, view.routing, self._on_expert_failure, stats=self._trace
+        )
         self.model = load_central(self.model_config, MODEL_FILE, self.dispatcher)
         self.tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
         self.role = NodeRole.LEADER
@@ -214,6 +225,48 @@ class Node:
         if new_table is not None:
             broadcast_routing(view, self.name)
         assert new_table is not None
+        return new_table
+
+    def replan(self) -> RoutingTable | None:
+        """Recompute expert placement from observed activations + profiles (Phase 2).
+
+        Returns the new table (epoch bumped) if it changed, else ``None``. Skipped when the
+        cluster has no profiles (classic single-node-GPU setup) or too few observed tokens.
+        """
+        if not self.env.profiles or self._trace is None:
+            return None
+        stats = self._trace.snapshot()
+        if stats.total_tokens < REPLAN_MIN_TOKENS:
+            return None
+        view = self.engine.view
+        assert view.routing is not None
+        try:
+            new_table = plan_routing(
+                self.env.profiles,
+                stats,
+                rtt_ms={n: 0.0 for n in self.env.profiles},  # TODO(phase 4): measure RTT
+                leader=self.name,
+                prev_table=view.routing,
+            )
+        except ValueError as exc:
+            logger.warning("%s: replan skipped: %s", self.name, exc)
+            return None
+        if new_table.assignment == view.routing.assignment:
+            return None
+        new_view = self.engine.mutate(
+            lambda v: ClusterView(members=v.members, routing=new_table)
+        )
+        if self.dispatcher is not None:
+            self.dispatcher.set_table(new_table)
+        if self.expert_group is not None:
+            self.expert_group.set_routing(new_table)
+        broadcast_routing(new_view, self.name)
+        logger.info(
+            "%s: replanned from %d observed tokens -> routing epoch %d",
+            self.name,
+            stats.total_tokens,
+            new_table.epoch,
+        )
         return new_table
 
     def accept_leader(self, node_id: str, epoch: int) -> None:

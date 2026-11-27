@@ -22,6 +22,7 @@ from torch import Tensor
 
 from mixup_core.constants import EXPERT_PORT, address
 from mixup_core.runtime import RoutingTable
+from mixup_core.stats import TraceBuffer
 
 from .metrics import MetricsCollector
 from .serialization import ExpertRequest, ExpertResponse
@@ -47,11 +48,14 @@ class Dispatcher:
         table: RoutingTable,
         on_failure: Callable[[str], RoutingTable],
         max_retries: int = 2,
+        stats: TraceBuffer | None = None,
     ) -> None:
         self.name = name
         self.table = table
         self.on_failure = on_failure  # (node) -> new RoutingTable (after rebalance)
         self.max_retries = max_retries
+        self.stats = stats  # optional activation-statistics recorder (leader only)
+        self._token_layers: list[list[int]] = []
         self.expert_nodes = {entry.node_id for entry in table.assignment.values()}
         self._pool = ThreadPoolExecutor(max_workers=max(1, len(self.expert_nodes)))
         # A shared Session for the control path (/health polling), and one persistent
@@ -70,6 +74,12 @@ class Dispatcher:
     ) -> Tensor:
         if layer == 0:
             self._token += 1
+            if self.stats is not None:
+                self._token_layers = [[] for _ in range(self.stats.num_layers)]
+        if self.stats is not None:
+            self._token_layers[layer] = top_k_index.flatten().tolist()
+            if layer == self.stats.num_layers - 1:
+                self.stats.record(self._token_layers)
         for _ in range(self.max_retries + 1):
             chosen = self._chosen(top_k_index)
             try:
