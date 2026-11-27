@@ -349,23 +349,28 @@ class Node:
         if member is None:
             return
 
-        def _mark_alive(v: ClusterView) -> ClusterView:
-            return apply_gossip(
+        if self._trace is not None and self._trace.tokens >= REPLAN_MIN_TOKENS:
+            self.engine.mutate(
+                lambda v: apply_gossip(
+                    v,
+                    Alive(
+                        node_id=node_id,
+                        incarnation=member.incarnation + 1,
+                        epoch=member.epoch,
+                    ),
+                )
+            )
+            if self.replan() is not None:
+                logger.info(
+                    "%s: rebalanced after %s rejoined (via replan)", self.name, node_id
+                )
+                return
+
+        def _rebalance(v: ClusterView) -> ClusterView:
+            v = apply_gossip(
                 v,
                 Alive(node_id=node_id, incarnation=member.incarnation + 1, epoch=member.epoch),
             )
-
-        self.engine.mutate(_mark_alive)
-
-        if (
-            self._trace is not None
-            and self._trace.tokens >= REPLAN_MIN_TOKENS
-            and self.replan() is not None
-        ):
-            logger.info("%s: rebalanced after %s rejoined (via replan)", self.name, node_id)
-            return
-
-        def _rebalance(v: ClusterView) -> ClusterView:
             if v.routing is not None:
                 new_table = balance_experts(v, v.routing, LeastLoadedPolicy())
                 if self.dispatcher is not None:

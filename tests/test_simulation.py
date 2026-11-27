@@ -67,8 +67,8 @@ def test_expert_crash_rebalances_with_coverage_and_uniqueness() -> None:
     owners = [e.node_id for e in table.assignment.values()]
     assert set(table.assignment) == set(range(NUM_EXPERTS))  # coverage
     assert "n1" not in owners  # dead node owns nothing
-    assert "leader" not in owners  # leader holds no experts
-    assert set(owners) <= {"n2", "n3"}  # only alive expert nodes own experts
+    # Leader-as-owner: every alive node (including the leader) is an eligible owner.
+    assert set(owners) <= {"leader", "n2", "n3"}
 
 
 def test_leader_crash_elects_freshest_survivor() -> None:
