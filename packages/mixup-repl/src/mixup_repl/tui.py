@@ -135,8 +135,11 @@ class MixupApp(App):
     # -- polling ----------------------------------------------------------
 
     async def _poll_loop(self) -> None:
+        import contextlib
+
         while True:
-            await self._poll_once()
+            with contextlib.suppress(Exception):
+                await self._poll_once()
             await asyncio.sleep(POLL)
 
     async def _poll_once(self) -> None:
@@ -237,7 +240,9 @@ class MixupApp(App):
 
     def _refresh_predictor(self) -> None:
         p = self.predictor
-        if not p:
+        widget = self.query_one("#predictor-text", Static)
+        if not p or p.get("kind") == "none" or p.get("samples", 0) == 0:
+            widget.update("[i]no predictor trained yet[/i]")
             return
         s = p.get("samples", 0)
         t1 = p.get("top1_hits", 0)
@@ -248,7 +253,7 @@ class MixupApp(App):
             f"top-1: {t1}/{s} = {t1 / s:.3f}  (misses {s - t1})\n"
             f"top-3: {t3}/{s} = {t3 / s:.3f}  (misses {s - t3})\n"
         )
-        self.query_one("#predictor-text", Static).update(text)
+        widget.update(text)
 
     def _refresh_summary(self) -> None:
         leader = self.leader or "none"
