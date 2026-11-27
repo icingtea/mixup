@@ -90,3 +90,15 @@ note. No phase merges on "works on my laptop".
 - Granite 1B-A400M is ~2.6 GB; all five devices fit it in RAM, so real offload pressure is
   created with configurable budgets. The simulator includes larger synthetic MoE models for
   the scaling story.
+
+## Findings so far (Phase 0)
+
+- **Placement is only non-trivial under a memory budget.** Without one, the optimizer
+  (correctly) puts every expert on the single fastest device, because the 1B model fits in
+  its VRAM and single-stream latency is minimized by touching the fewest, fastest nodes.
+  With a realistic per-node budget (e.g. 800 MB on the real Granite trace), the
+  latency-aware placement beats uniform by ~29% (255 ms → 181 ms p50). The budget is what
+  forces the heterogeneous spread — and it is exactly the report's memory constraint.
+- `mixup-bench` on the 5060 (dedicated, no contention): `expert_fixed_ms ≈ 0.47 ms`,
+  `expert_per_ms ≈ 0.038 ms`. The earlier ~1.6–4.6 ms round-trips were shared-GPU
+  contention, not the cost of one expert forward.

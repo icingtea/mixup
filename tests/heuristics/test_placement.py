@@ -85,6 +85,13 @@ def test_uniform_respects_capacity() -> None:
     assert list(a.values()).count("fast") == 1
 
 
+def test_uniform_raises_when_infeasible() -> None:
+    # Total capacity 2 experts < 4 needed.
+    p = _problem(budget={"fast": 1_000_000, "slow": 1_000_000})
+    with pytest.raises(ValueError):
+        UniformPolicy().place(p)
+
+
 def test_latency_policy_not_worse_than_frequency() -> None:
     p = _problem()
     freq = FrequencyPolicy().place(p)

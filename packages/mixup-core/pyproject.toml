@@ -13,3 +13,4 @@ dependencies = [
 
 [project.scripts]
 mixup-smoketest = "mixup_core.smoketest:main"
+mixup-place = "mixup_core.place_cli:main"

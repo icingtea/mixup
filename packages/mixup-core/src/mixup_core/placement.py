@@ -218,14 +218,17 @@ class UniformPolicy:
         assignment: dict[ExpertId, NodeId] = {}
         i = 0
         for e in range(problem.num_experts):
-            # Find the next node with remaining capacity (round-robin, deterministic).
+            placed = False
             for _ in range(len(nodes)):
                 node = nodes[i % len(nodes)]
                 i += 1
                 if cap[node] > 0:
                     assignment[e] = node
                     cap[node] -= 1
+                    placed = True
                     break
+            if not placed:
+                raise ValueError("placement infeasible: no node has remaining capacity")
         return assignment
 
 
