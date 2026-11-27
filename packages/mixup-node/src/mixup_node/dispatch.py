@@ -197,6 +197,15 @@ class Dispatcher:
         out = ExpertResponse.from_bytes(reply[8:]).out
         deserialize_time = time.perf_counter() - deserialize_start
 
+        if torch.isnan(out).any() or torch.isinf(out).any():
+            logger.error(
+                "token %d layer %d <- %s returned NaN/inf (server=%.2fms)",
+                self._token,
+                layer,
+                container,
+                server_time * 1000,
+            )
+
         logger.debug(
             "token %d layer %d -> %s: rt=%.2fms "
             "(serialize=%.2f http=%.2f server=%.2f deserialize=%.2f)",
