@@ -65,3 +65,37 @@ class CommitLog(BaseModel):
     @property
     def next_index(self) -> int:
         return (self.records[-1].index + 1) if self.records else 1
+
+
+class CommitTracker:
+    """Tracks per-token acks and advances the committed watermark on majority-ack.
+
+    The leader appends each generated token and records acks (including its own) as
+    followers confirm replication. The watermark advances to the highest *contiguous*
+    index with a majority ack — a token is only committed once every token before it is.
+    """
+
+    def __init__(self, num_nodes: int, log: CommitLog | None = None) -> None:
+        self.num_nodes = num_nodes
+        self.quorum = quorum_size(num_nodes)
+        self.log = log or CommitLog()
+        self._acks: dict[int, set[str]] = {}
+
+    def append(self, term: int, token_id: int, kv_seq: int) -> CommitRecord:
+        record = CommitRecord(
+            term=term, index=self.log.next_index, token_id=token_id, kv_seq=kv_seq
+        )
+        self.log.append(record)
+        return record
+
+    def record_ack(self, index: int, node_id: str) -> int:
+        """Record an ack from ``node_id``; return the new committed watermark."""
+        self._acks.setdefault(index, set()).add(node_id)
+        while (
+            self.log.committed + 1
+        ) in self._acks and len(self._acks[self.log.committed + 1]) >= self.quorum:
+            self.log.advance(self.log.committed + 1)
+        return self.log.committed
+
+    def ack_count(self, index: int) -> int:
+        return len(self._acks.get(index, set()))
