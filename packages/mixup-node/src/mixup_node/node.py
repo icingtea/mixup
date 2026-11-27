@@ -520,7 +520,16 @@ class Node:
         self.dispatcher.wait_for_experts()
 
         device = self.model.device
-        prompt_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(device)
+        # Apply the Granite chat template (the model is instruct-tuned; a bare prompt
+        # produces degenerate output). Falls back to raw tokenization if templating fails.
+        try:
+            prompt_ids = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                add_generation_prompt=True,
+                return_tensors="pt",
+            )["input_ids"].to(device)
+        except Exception:  # noqa: BLE001 - older tokenizers / missing Jinja helpers
+            prompt_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(device)
         prompt_len = prompt_ids.shape[1]
         prompt_list = prompt_ids[0].tolist()
 
