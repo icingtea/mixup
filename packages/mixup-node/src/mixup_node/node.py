@@ -314,7 +314,7 @@ class Node:
 
         if warm:
             past = cache_from_bytes(base64.b64decode(state.cache_b64), device)
-            nxt = torch.tensor([[state.next_token]], device=device)
+            nxt = torch.tensor([state.next_token], device=device)
             generated_ids: list[int] = state.input_ids[prompt_len:]
             remaining = max(0, max_new_tokens - len(generated_ids))
             logger.info(
