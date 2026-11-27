@@ -57,7 +57,7 @@ def _alive_expert_ids(view: ClusterView) -> set[NodeId]:
     }
 
 
-def _finalize(placed: dict[ExpertId, NodeId], epoch: int) -> RoutingTable:
+def finalize(placed: dict[ExpertId, NodeId], epoch: int) -> RoutingTable:
     """Derive each node's local slots from its sorted owned list."""
     by_node: dict[NodeId, list[ExpertId]] = {}
     for expert, node in placed.items():
@@ -91,7 +91,7 @@ def rebalance_experts(
     unowned = [expert for expert in prev.assignment if expert not in kept]
     placed = policy.place(view, unowned)
 
-    return _finalize({**kept, **placed}, prev.epoch + 1)
+    return finalize({**kept, **placed}, prev.epoch + 1)
 
 
 def balance_experts(
@@ -106,7 +106,7 @@ def balance_experts(
     others shed some of theirs.
     """
     placed = (policy or LeastLoadedPolicy()).place(view, sorted(prev.assignment))
-    return _finalize(placed, prev.epoch + 1)
+    return finalize(placed, prev.epoch + 1)
 
 
 def handle_node_failure(
