@@ -45,6 +45,19 @@ class LatencyStats:
     num_samples: int
 
 
+def summarize_latencies(values: list[float]) -> LatencyStats:
+    """Aggregate a list of per-token latencies into p50/p95/mean/max."""
+    if not values:
+        return LatencyStats(0.0, 0.0, 0.0, 0.0, 0)
+    return LatencyStats(
+        p50_ms=_percentile(values, 0.5),
+        p95_ms=_percentile(values, 0.95),
+        mean_ms=sum(values) / len(values),
+        max_ms=max(values),
+        num_samples=len(values),
+    )
+
+
 @dataclass
 class PlacementAnalysis:
     """Full evaluation of a placement: latency stats + churn + memory violation."""
@@ -123,13 +136,7 @@ def evaluate(
 
     if not latencies:
         return LatencyStats(0.0, 0.0, 0.0, 0.0, 0)
-    return LatencyStats(
-        p50_ms=_percentile(latencies, 0.5),
-        p95_ms=_percentile(latencies, 0.95),
-        mean_ms=sum(latencies) / len(latencies),
-        max_ms=max(latencies),
-        num_samples=len(latencies),
-    )
+    return summarize_latencies(latencies)
 
 
 def moved_experts(problem: PlacementProblem, assignment: dict[ExpertId, NodeId]) -> list[ExpertId]:
