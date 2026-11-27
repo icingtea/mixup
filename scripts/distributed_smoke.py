@@ -60,7 +60,10 @@ o3 = g3.forward(0, hidden, top_k, w)
 total = o1 + o2 + o3
 oref = ref(hidden, top_k, w)
 
-finite = f"store={torch.isfinite(o1).all()} g2={torch.isfinite(o2).all()} g3={torch.isfinite(o3).all()}"
+finite = (
+    f"store={torch.isfinite(o1).all()} "
+    f"g2={torch.isfinite(o2).all()} g3={torch.isfinite(o3).all()}"
+)
 print(finite)
 print(f"max diff (distributed vs ref): {(total - oref).abs().max().item():.6f}")
 
