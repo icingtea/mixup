@@ -246,6 +246,10 @@ class Node:
         view = self.engine.mutate(lambda v: failover_with_backups(v, node, by_node=self.name))
         new_table = view.routing
         if new_table is not None:
+            # Update our own expert store directly (the loopback /routing broadcast is
+            # ignored as stale since it carries the same epoch we already hold).
+            if self.expert_group is not None:
+                self.expert_group.set_routing(new_table)
             broadcast_routing(view, self.name)
         assert new_table is not None
         return new_table

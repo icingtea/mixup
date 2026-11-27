@@ -81,6 +81,19 @@ def build_app(node: Node) -> FastAPI:
             node.expert_group.set_routing(table)
         return {"ok": True}
 
+    @app.get("/routing")
+    async def get_routing() -> dict:
+        table = node.engine.view.routing
+        if table is None:
+            return {"epoch": None, "assignment": {}}
+        return {
+            "epoch": table.epoch,
+            "assignment": {
+                str(e): {"node": r.node_id, "slot": r.slot, "backup": r.backup}
+                for e, r in table.assignment.items()
+            },
+        }
+
     @app.post("/join")
     async def join(request: Request) -> dict:
         if node.model is None:
