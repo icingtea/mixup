@@ -42,6 +42,7 @@ from .kv_cache import cache_from_bytes, cache_to_bytes
 from .memory import TieredExpertStore
 from .metrics import MetricsCollector
 from .model import ExpertGroup, load_central
+from .monitor import ResourceMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,7 @@ class Node:
         self._peer_idx = 0  # round-robin cursor for gossip peer selection
         self._trace: TraceBuffer | None = None  # leader's activation stats (Phase 2)
         self._next_replan_at = REPLAN_MIN_TOKENS  # token count for the next re-plan
+        self.monitor = ResourceMonitor()  # live CPU/memory/GPU sampling
 
     # -- control loop ------------------------------------------------------
 

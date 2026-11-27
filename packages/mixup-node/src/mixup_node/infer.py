@@ -129,6 +129,22 @@ def build_app(node: Node) -> FastAPI:
             }
         return {"type": "resident", "experts": group.experts}
 
+    @app.get("/metrics")
+    async def metrics() -> dict:
+        """Live resource perception: smoothed CPU/memory/GPU, profile, routing, stats."""
+        profile = node.env.profiles.get(node.name)
+        table = node.engine.view.routing
+        return {
+            "node": node.name,
+            "role": node.role.value,
+            "execution": profile.execution.value if profile else None,
+            "resources": node.monitor.snapshot(),
+            "profile": profile.model_dump() if profile else None,
+            "stats": {"total_tokens": node._trace.tokens if node._trace else 0},
+            "routing_epoch": table.epoch if table else None,
+            "owned_experts": node.expert_group.experts if node.expert_group else [],
+        }
+
     @app.post("/generate")
     def generate(request: GenerateRequest) -> dict:
         if node.model is None:
