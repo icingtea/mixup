@@ -54,12 +54,12 @@ transport (`gossip_http.py`), and `scripts/*` (smoke tests + offline predictor t
 
 ## Remaining
 
-1. **Boot-settling quirk** — the first generation after a fresh `mixup-lab` (or right after a
-   failover) can be short/rambly while the cluster settles its routing; subsequent
-   generations are clean. Last correctness/quality gap; self-healing.
-2. **Phase 7 deployment** (needs the physical 3070/3060/2×Pi testbed): multi-host
-   Docker-over-SSH, CUDA/ARM image variants, model sync, real-device calibration, rerun the
-   validation matrix. Tooling can be written here; final validation needs the hardware.
+1. **Phase 7 deployment** — cross-host deployment tooling is now in place (per-node endpoints,
+   run-spec planner, remote Docker execution via SSH/TCP, `devices.json`, `docs/deploy.md`).
+   What's left to go live on the real devices:
+   - Push a multi-arch image (`gh auth refresh -s write:packages`, then buildx → GHCR).
+   - Set up SSH (OpenSSH on Windows, key on the Pi) and confirm `ssh <host> docker version`.
+   - Deploy PC + Pi + Windows, seed/measure profiles, rerun the failover matrix.
 
 ## Optional / deferred (paper heuristics not yet wired)
 
@@ -85,6 +85,12 @@ nix develop --command <cmd>
 docker build --network=host --tag mixup:latest .   # node image (torch/CUDA)
 nix develop --command mixup-lab                    # emulated lab (9000/9001/9002)
 nix develop --command mixup-repl --config lab_config.json "prompt"  # client w/ failover retry
+
+# cross-host deployment (see docs/deploy.md)
+nix develop --command mixup-lab doctor devices.json
+nix develop --command mixup-lab up devices.json
+nix develop --command mixup-lab status devices.json
+nix develop --command mixup-lab down devices.json
 
 curl localhost:9000/metrics   # live resource perception + profile + stats
 curl localhost:9000/routing   # expert -> {node, slot, backup}
