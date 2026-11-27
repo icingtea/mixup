@@ -1,67 +1,56 @@
 <script lang="ts">
-	import type { LocalBenchResult } from '$lib/types';
+	import type { GenerateResult, LocalBenchResult } from '$lib/types';
+	import ChatTab from './ChatTab.svelte';
 
-	let result = $state<LocalBenchResult | null>(null);
-	let busy = $state(false);
-
-	async function run() {
-		busy = true;
-		result = null;
-		try {
-			const res = await fetch('/api/local', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					prompt: 'Explain mixture of experts models.',
-					max_new_tokens: 60
-				})
-			});
-			result = (await res.json()) as LocalBenchResult;
-		} catch (e) {
-			result = { ok: false, error: e instanceof Error ? e.message : String(e) };
-		} finally {
-			busy = false;
+	async function localSend(prompt: string): Promise<GenerateResult | null> {
+		const res = await fetch('/api/local', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ prompt, max_new_tokens: 60 })
+		});
+		const d = (await res.json()) as LocalBenchResult;
+		if (!d.ok) {
+			return {
+				text: `error: ${d.error ?? 'unknown error'}`,
+				tokens: 0,
+				elapsed_seconds: 0,
+				dense_seconds: null,
+				dispatch_seconds: null
+			};
 		}
+		return {
+			text: d.text ?? '',
+			tokens: d.tokens ?? 0,
+			elapsed_seconds: d.elapsed_seconds ?? 0,
+			dense_seconds: null,
+			dispatch_seconds: null
+		};
 	}
 </script>
 
-<div class="card">
-	<p>
-		Runs the whole model single-process on a GPU node (inside its container) — a
-		"no distribution" baseline to compare against the distributed cluster.
-	</p>
-	<button class="primary" onclick={run} disabled={busy}>
-		{busy ? 'running…' : 'Run local benchmark (no distribution)'}
-	</button>
+<div class="local">
+	<div class="note muted">
+		single-process model · no distribution — first message loads the model, then it stays warm
+	</div>
+	<div class="chat-wrap">
+		<ChatTab onSend={localSend} />
+	</div>
 </div>
 
-{#if result}
-	<div class="card result">
-		{#if result.ok}
-			<p><b>local (no distribution)</b></p>
-			<p>
-				{result.tokens ?? 0} tokens in {(result.elapsed_seconds ?? 0).toFixed(2)}s =
-				<span class="green">
-					{((result.tokens ?? 0) / Math.max(result.elapsed_seconds ?? 0, 1e-9)).toFixed(2)} tok/s
-				</span>
-			</p>
-			<p class="muted">{result.text}</p>
-		{:else}
-			<p class="red">error: {result.error}</p>
-		{/if}
-	</div>
-{/if}
-
 <style>
-	.card p {
-		margin: 6px 0;
+	.local {
+		height: 100%;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
 	}
 
-	.result {
-		margin-top: 14px;
+	.note {
+		font-size: 12px;
 	}
 
-	.result .muted {
-		white-space: pre-wrap;
+	.chat-wrap {
+		flex: 1;
+		min-height: 0;
 	}
 </style>

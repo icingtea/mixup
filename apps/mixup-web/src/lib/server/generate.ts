@@ -23,6 +23,17 @@ async function waitReady(url: string, timeoutMs = 30000): Promise<boolean> {
 	return false;
 }
 
+async function fetchExpertCounts(url: string): Promise<number[]> {
+	try {
+		const res = await fetch(`${url}/experts`, { signal: AbortSignal.timeout(2000) });
+		if (!res.ok) return [];
+		const j = (await res.json()) as { counts?: number[] };
+		return Array.isArray(j.counts) ? j.counts : [];
+	} catch {
+		return [];
+	}
+}
+
 export async function generate(prompt: string, maxNewTokens: number): Promise<GenerateResult> {
 	const urls = nodeUrls(loadStartup());
 	for (let attempt = 0; attempt < 10; attempt++) {
@@ -36,6 +47,9 @@ export async function generate(prompt: string, maxNewTokens: number): Promise<Ge
 			await sleep(2000);
 			continue;
 		}
+		// Snapshot expert activation counts so the response can report this message's
+		// per-expert usage (diff before/after).
+		const before = await fetchExpertCounts(url);
 		try {
 			const res = await fetch(`${url}/generate`, {
 				method: 'POST',
@@ -45,7 +59,10 @@ export async function generate(prompt: string, maxNewTokens: number): Promise<Ge
 				// connection, which we catch and retry against the new leader.
 			});
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			return (await res.json()) as GenerateResult;
+			const result = (await res.json()) as GenerateResult;
+			const after = await fetchExpertCounts(url);
+			result.expert_counts = after.map((v, i) => v - (before[i] ?? 0));
+			return result;
 		} catch {
 			await sleep(2000); // wait for failover, then re-discover
 		}

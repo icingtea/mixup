@@ -75,6 +75,10 @@ class StartupConfig(BaseModel):
     kv_sync_every: int = 5
     """How often (in generated tokens) the leader broadcasts its warm KV cache to peers."""
 
+    predictor_kind: str = "mlp"
+    """The next-layer predictor to train: ``"lr"`` (logistic regression) or ``"mlp"``
+    (CoMoE's 2-layer MLP, the default)."""
+
     @field_validator("experts")
     @classmethod
     def _experts_unique(cls, value: ExpertAlloc) -> ExpertAlloc:

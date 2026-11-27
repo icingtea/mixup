@@ -107,6 +107,7 @@ export interface GenerateResult {
 	elapsed_seconds: number;
 	dense_seconds: number | null;
 	dispatch_seconds: number | null;
+	expert_counts?: number[]; // per-expert activation counts for this message (diff)
 }
 
 export interface LocalBenchResult {

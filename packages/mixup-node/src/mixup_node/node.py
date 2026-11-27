@@ -277,7 +277,14 @@ class Node:
         return ExpertGroup(self.name, self.model_config, MODEL_FILE, table)
 
     def _make_predictor(self, feature_dim: int, num_experts: int):
-        """The leader's next-layer predictor (LR; the MLP did not beat it in eval)."""
+        """The leader's next-layer predictor (configurable: ``predictor_kind``).
+
+        CoMoE specifies a 2-layer MLP; the logistic-regression baseline is kept as an
+        option (it won the eval, but the paper's default is the MLP).
+        """
+        kind = getattr(self.env.config, "predictor_kind", "mlp")
+        if kind == "mlp":
+            return MLPPredictor(feature_dim, num_experts)
         return LRPredictor(feature_dim, num_experts)
 
     def _sync_predictor(self) -> None:

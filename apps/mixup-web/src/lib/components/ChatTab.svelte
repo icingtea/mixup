@@ -1,15 +1,43 @@
 <script lang="ts">
 	import type { GenerateResult } from '$lib/types';
 
+	interface ExpertUsage {
+		top: { e: number; c: number }[];
+		distinct: number;
+		total: number;
+		max: number;
+	}
+
+	interface Msg {
+		role: 'user' | 'assistant';
+		text: string;
+		meta?: string;
+		usage?: ExpertUsage;
+	}
+
 	interface Props {
 		onSend: (prompt: string) => Promise<GenerateResult | null>;
 	}
 
 	let { onSend }: Props = $props();
 
-	let messages = $state<{ role: 'user' | 'assistant'; text: string; meta?: string }[]>([]);
+	let messages = $state<Msg[]>([]);
 	let input = $state('');
 	let busy = $state(false);
+
+	function computeUsage(counts: number[] | undefined): ExpertUsage | undefined {
+		if (!counts || counts.length === 0) return undefined;
+		const total = counts.reduce((a, c) => a + c, 0);
+		if (total === 0) return undefined;
+		const distinct = counts.filter((c) => c > 0).length;
+		const max = Math.max(1, ...counts);
+		const top = counts
+			.map((c, e) => ({ e, c }))
+			.filter((t) => t.c > 0)
+			.sort((a, b) => b.c - a.c)
+			.slice(0, 12);
+		return { top, distinct, total, max };
+	}
 
 	async function submit() {
 		const prompt = input.trim();
@@ -26,7 +54,8 @@
 					{
 						role: 'assistant',
 						text: r.text,
-						meta: `${r.tokens} tokens in ${r.elapsed_seconds.toFixed(2)}s (${tokS.toFixed(2)} tok/s)`
+						meta: `${r.tokens} tokens in ${r.elapsed_seconds.toFixed(2)}s (${tokS.toFixed(2)} tok/s)`,
+						usage: computeUsage(r.expert_counts)
 					}
 				];
 			} else {
@@ -50,6 +79,22 @@
 				<span class="role">{m.role === 'user' ? 'you' : 'assistant'}</span>
 				<p>{m.text}</p>
 				{#if m.meta}<span class="meta">{m.meta}</span>{/if}
+				{#if m.usage}
+					<details class="expert-usage">
+						<summary>{m.usage.distinct} experts · {m.usage.total} activations</summary>
+						<div class="expert-list">
+							{#each m.usage.top as t (t.e)}
+								<div class="expert-row">
+									<span class="e-name">expert {t.e}</span>
+									<span class="e-bar">
+										<span class="e-fill" style="width:{(t.c / m.usage.max) * 100}%"></span>
+									</span>
+									<span class="e-count">{t.c}</span>
+								</div>
+							{/each}
+						</div>
+					</details>
+				{/if}
 			</div>
 		{/each}
 		{#if busy}
@@ -128,5 +173,64 @@
 	.input-row {
 		display: flex;
 		gap: 8px;
+	}
+
+	.expert-usage {
+		margin-top: 4px;
+		font-size: 12px;
+	}
+
+	.expert-usage summary {
+		cursor: pointer;
+		color: var(--muted);
+		user-select: none;
+	}
+
+	.expert-usage summary:hover {
+		color: var(--accent);
+	}
+
+	.expert-list {
+		margin-top: 6px;
+		background: var(--panel);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 6px 10px;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.expert-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.e-name {
+		width: 64px;
+		color: var(--muted);
+	}
+
+	.e-bar {
+		flex: 1;
+		height: 6px;
+		background: var(--panel-2);
+		border-radius: 3px;
+		overflow: hidden;
+	}
+
+	.e-fill {
+		display: block;
+		height: 100%;
+		background: var(--accent);
+		border-radius: 3px;
+	}
+
+	.e-count {
+		width: 28px;
+		text-align: right;
+		color: var(--text);
 	}
 </style>
