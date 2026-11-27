@@ -339,16 +339,30 @@ class Node:
             logger.warning("%s: could not declare rejoin to %s", self.name, leader)
 
     def rejoin(self, node_id: str) -> None:
-        """A node announced it rejoined: mark it alive and rebalance to include it."""
+        """A node announced it rejoined: mark it alive and give it a share of experts.
+
+        With warm stats, re-place via the churn-aware planner (gives the rejoined node a
+        fair share without reshuffling everyone); at cold start, fall back to an even
+        reshuffle.
+        """
         member = self.engine.view.members.get(node_id)
         if member is None:
             return
 
-        def _rebalance(v: ClusterView) -> ClusterView:
-            v = apply_gossip(
+        def _mark_alive(v: ClusterView) -> ClusterView:
+            return apply_gossip(
                 v,
                 Alive(node_id=node_id, incarnation=member.incarnation + 1, epoch=member.epoch),
             )
+
+        self.engine.mutate(_mark_alive)
+
+        if self._trace is not None and self._trace.tokens >= REPLAN_MIN_TOKENS:
+            if self.replan() is not None:
+                logger.info("%s: rebalanced after %s rejoined (via replan)", self.name, node_id)
+                return
+
+        def _rebalance(v: ClusterView) -> ClusterView:
             if v.routing is not None:
                 new_table = balance_experts(v, v.routing, LeastLoadedPolicy())
                 if self.dispatcher is not None:
