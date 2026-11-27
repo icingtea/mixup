@@ -68,3 +68,11 @@ export function nodeUrls(cfg: StartupConfig): Record<string, string> {
 	});
 	return urls;
 }
+
+/** The Docker daemon a node's container runs on (null = this host). */
+export function dockerHostFor(name: string): string | null {
+	const raw = JSON.parse(readFileSync(findConfig(), 'utf8'));
+	const spec = (raw.specs ?? {})[name] as { docker_host?: string } | undefined;
+	const host = spec?.docker_host;
+	return host && host !== 'local' ? host : null;
+}
