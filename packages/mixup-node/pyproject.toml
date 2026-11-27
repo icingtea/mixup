@@ -9,6 +9,7 @@ description = "In-container runtime for distributed MoE inference: loads its exp
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.165.0",
+    "huggingface_hub>=0.30.0",
     "mixup-core",
     "pydantic>=2.14.2",
     "requests>=2.34.0",
@@ -20,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 mixup-node = "mixup_node.infer:start"
+mixup-node-fetch = "mixup_node.fetch:main"
 
 [tool.uv.sources]
 mixup-core = { workspace = true }

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Host-side Docker orchestration for distributed MoE inference."
 requires-python = ">=3.13"
 dependencies = [
-    "docker>=7.2.0",
+    "docker[ssh]>=7.2.0",
     "huggingface_hub>=0.30.0",
     "mixup-core",
 ]

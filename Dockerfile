@@ -41,7 +41,7 @@ ENV PATH="/usr/local/app/.venv/bin:$PATH"
 # shared GPU (CUBLAS_STATUS_ALLOC_FAILED / torch.OutOfMemoryError).
 ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-EXPOSE 8000
+EXPOSE 8000 8001
 
 RUN useradd app
 USER app

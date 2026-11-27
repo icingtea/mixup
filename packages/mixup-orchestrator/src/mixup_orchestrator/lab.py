@@ -1,9 +1,10 @@
-"""``mixup-lab``: stand up an emulated heterogeneous cluster on this machine.
+"""``mixup-lab``: stand up a mixup cluster (emulated on this machine, or across devices).
 
-Unlike ``mixup-orchestrator`` (which gives every container the GPU), the lab starts each
-node with its own ``LabNodeSpec``: GPU nodes get the NVIDIA CDI device, CPU nodes run with
-``CUDA_VISIBLE_DEVICES=""`` and no GPU device, and both can be capped with ``--cpus`` /
-``--memory``. The node's ``DeviceProfile`` (for placement) is injected via ``NodeEnv``.
+The config decides the mode: a config with an empty ``startup.endpoints`` map runs the
+single-host emulated lab (every node on the local Docker daemon, sharing the cluster
+network, with bind-mounted models); a config with explicit endpoints deploys one container
+per device (each publishing its control + expert ports, using named volumes, reachable over
+the configured URLs). The pure run plan lives in ``deploy.py``; ``targets.py`` executes it.
 """
 
 import argparse
@@ -11,152 +12,64 @@ import logging
 from pathlib import Path
 
 import docker
-from docker.errors import NotFound
-from docker.types import DeviceRequest
 
-from mixup_core.constants import (
-    EXTERNAL_PORT_BASE,
-    IMAGE_NAME,
-    IMAGE_TAG,
-    INTERNAL_PORT,
-    NETWORK_NAME,
-)
-from mixup_core.devices import ExecutionType
-from mixup_core.env import NODE_ENV_VAR, NodeEnv, dump_node_env
+from mixup_core.constants import NETWORK_NAME
 from mixup_core.lab import LabConfig
 from mixup_core.logging_config import configure_logging
 
+from . import targets
 from .network import get_or_create_network
 
 logger = logging.getLogger(__name__)
-
-MODELS_DIR = Path("models")
-CONTAINER_MODELS_DIR = "/usr/local/app/models"
-LEDGER_DIR = Path("var/ledger")
-CONTAINER_LEDGER_DIR = "/usr/local/app/ledger"
 
 
 def _load_lab_config(path: str | Path) -> LabConfig:
     return LabConfig.model_validate_json(Path(path).read_text())
 
 
-def _start_node(
-    client: docker.DockerClient,
-    image,
-    name: str,
-    port: int,
-    lab: LabConfig,
-    prompt: str,
-    max_new_tokens: int,
-) -> None:
-    try:
-        container = client.containers.get(name)
-        if container.status == "running":
-            logger.info("%s RUNNING.", name)
-        else:
-            container.start()
-            logger.info("%s STARTED.", name)
-        return
-    except NotFound:
-        pass
-
-    spec = lab.spec_for(name)
-    is_gpu = spec.execution is ExecutionType.GPU
-    device_requests = (
-        [DeviceRequest(driver="cdi", device_ids=["nvidia.com/gpu=all"])] if is_gpu else None
-    )
-
-    node_env = NodeEnv(
-        container_name=name,
-        config=lab.startup,
-        prompt=prompt,
-        max_new_tokens=max_new_tokens,
-        profiles=lab.profiles,
-        profile_mode=lab.profile_mode,
-    )
-    environment = {NODE_ENV_VAR: dump_node_env(node_env)}
-    if not is_gpu:
-        environment["CUDA_VISIBLE_DEVICES"] = ""
-
-    LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    LEDGER_DIR.chmod(0o777)
-
-    client.containers.run(
-        image=image,
-        name=name,
-        detach=True,
-        network=NETWORK_NAME,
-        ports={f"{INTERNAL_PORT}/tcp": port},
-        restart_policy={"Name": "unless-stopped"},
-        environment=environment,
-        volumes={
-            str(MODELS_DIR.resolve()): {"bind": CONTAINER_MODELS_DIR, "mode": "ro"},
-            str(LEDGER_DIR.resolve()): {"bind": CONTAINER_LEDGER_DIR, "mode": "rw"},
-        },
-        device_requests=device_requests,
-        nano_cpus=int(spec.cpus * 1e9) if spec.cpus else None,
-        mem_limit=f"{spec.memory_mb}m" if spec.memory_mb else None,
-    )
-    logger.info(
-        "STARTED %s (%s, cpus=%s mem=%s)",
-        name,
-        spec.execution.value,
-        spec.cpus,
-        spec.memory_mb,
-    )
+def _clients(specs: dict) -> dict[str, docker.DockerClient]:
+    """One Docker client per distinct ``docker_host``, cached by host."""
+    clients: dict[str, docker.DockerClient] = {}
+    for spec in specs.values():
+        clients.setdefault(spec.docker_host, targets.get_client(spec.docker_host))
+    return clients
 
 
-def main(argv: list[str] | None = None) -> int:
-    configure_logging()
-    parser = argparse.ArgumentParser(description="Stand up the heterogeneous lab.")
-    parser.add_argument(
-        "command_or_config",
-        nargs="?",
-        default=None,
-        help="one of: render, doctor (else the config path for `up`).",
-    )
-    parser.add_argument(
-        "config",
-        nargs="?",
-        default=None,
-        help="path to a lab config (lab_config.json / devices.json).",
-    )
-    parser.add_argument("--prompt", default="What is mixture of experts?")
-    parser.add_argument("--max-new-tokens", type=int, default=50)
-    args = parser.parse_args(argv)
+def _cmd_up(lab: LabConfig, prompt: str, max_new_tokens: int) -> int:
+    from .deploy import plan_run_specs
 
-    commands = {"up", "render", "doctor"}
-    if args.command_or_config in commands:
-        command = args.command_or_config
-        config_path = args.config or "lab_config.json"
-    else:
-        command = "up"
-        config_path = args.command_or_config or "lab_config.json"
+    specs = plan_run_specs(lab, prompt, max_new_tokens)
+    # The emulated lab needs the cluster network so container names resolve.
+    if any(spec.network == NETWORK_NAME for spec in specs.values()):
+        get_or_create_network(targets.get_client("local"))
 
-    lab = _load_lab_config(config_path)
+    clients = _clients(specs)
+    for spec in specs.values():
+        client = clients[spec.docker_host]
+        targets.ensure_image(client, spec)
+        targets.ensure_model(client, spec)
+        targets.ensure_ledger(client, spec)
+        targets.start(client, spec)
+    return 0
 
-    if command == "render":
-        return _cmd_render(lab, args.prompt, args.max_new_tokens)
-    if command == "doctor":
-        return _cmd_doctor(lab, args.prompt, args.max_new_tokens)
 
-    client = docker.from_env()
-    image = client.images.get(f"{IMAGE_NAME}:{IMAGE_TAG}")
-    get_or_create_network(client)
+def _cmd_down(lab: LabConfig, prompt: str, max_new_tokens: int) -> int:
+    from .deploy import plan_run_specs
 
-    leader = lab.startup.initial_leader
-    _start_node(client, image, leader, EXTERNAL_PORT_BASE, lab, args.prompt, args.max_new_tokens)
-    others = [n for n in lab.startup.nodes if n != leader]
-    for offset, name in enumerate(others):
-        _start_node(
-            client,
-            image,
-            name,
-            EXTERNAL_PORT_BASE + offset + 1,
-            lab,
-            args.prompt,
-            args.max_new_tokens,
-        )
+    specs = plan_run_specs(lab, prompt, max_new_tokens)
+    clients = _clients(specs)
+    for spec in specs.values():
+        targets.remove(clients[spec.docker_host], spec)
+    return 0
+
+
+def _cmd_status(lab: LabConfig, prompt: str, max_new_tokens: int) -> int:
+    from .deploy import plan_run_specs
+
+    specs = plan_run_specs(lab, prompt, max_new_tokens)
+    clients = _clients(specs)
+    for spec in specs.values():
+        print(f"{spec.container_name:20s} {targets.status(clients[spec.docker_host], spec)}")
     return 0
 
 
@@ -188,6 +101,46 @@ def _cmd_doctor(lab: LabConfig, prompt: str, max_new_tokens: int) -> int:
             f"net={spec.network} ports=[{ports}]"
         )
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    configure_logging()
+    parser = argparse.ArgumentParser(description="Stand up the mixup lab / cluster.")
+    parser.add_argument(
+        "command_or_config",
+        nargs="?",
+        default=None,
+        help="one of: up, down, status, render, doctor (else the config path for `up`).",
+    )
+    parser.add_argument(
+        "config",
+        nargs="?",
+        default=None,
+        help="path to a lab config (lab_config.json / devices.json).",
+    )
+    parser.add_argument("--prompt", default="What is mixture of experts?")
+    parser.add_argument("--max-new-tokens", type=int, default=50)
+    args = parser.parse_args(argv)
+
+    commands = {"up", "down", "status", "render", "doctor"}
+    if args.command_or_config in commands:
+        command = args.command_or_config
+        config_path = args.config or "lab_config.json"
+    else:
+        command = "up"
+        config_path = args.command_or_config or "lab_config.json"
+
+    lab = _load_lab_config(config_path)
+
+    if command == "render":
+        return _cmd_render(lab, args.prompt, args.max_new_tokens)
+    if command == "doctor":
+        return _cmd_doctor(lab, args.prompt, args.max_new_tokens)
+    if command == "down":
+        return _cmd_down(lab, args.prompt, args.max_new_tokens)
+    if command == "status":
+        return _cmd_status(lab, args.prompt, args.max_new_tokens)
+    return _cmd_up(lab, args.prompt, args.max_new_tokens)
 
 
 if __name__ == "__main__":
