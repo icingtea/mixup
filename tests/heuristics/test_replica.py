@@ -100,3 +100,17 @@ def test_failover_double_failure_replaces_orphans() -> None:
     out = failover_with_backups(out, "b", "c")
     assert set(out.routing.assignment) == set(range(12))
     assert all(out.routing.assignment[e].node_id == "c" for e in range(12))
+
+
+def test_failover_is_idempotent_for_already_dead_node() -> None:
+    view = _view(_member("a"), _member("b"), _member("c"))
+    view = ClusterView(
+        members=view.members,
+        routing=plan_backups(_table({"a": (0, 5), "b": (6, 11)}), {"a", "b", "c"}),
+    )
+    out = failover_with_backups(view, "a", "c")
+    # a is now dead and owns no experts; a second failover (e.g. re-probing a dead peer)
+    # must be a no-op: no epoch bump, no assignment change.
+    out2 = failover_with_backups(out, "a", "c")
+    assert out2.routing.epoch == out.routing.epoch
+    assert out2.routing.assignment == out.routing.assignment

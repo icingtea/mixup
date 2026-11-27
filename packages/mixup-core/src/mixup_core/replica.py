@@ -67,9 +67,20 @@ def failover_with_backups(
     default). Returns a new view whose routing (epoch bumped) still covers every expert.
     """
     member = view.members.get(dead_node)
+    table = view.routing
+    already_dead = member is not None and member.status is MemberStatus.DEAD
+    # Idempotent: if the node is already dead and owns no experts, the failover was
+    # already applied. Re-probing a dead peer (failure-detection self-healing) must not
+    # bump the routing epoch or re-shard the pool again — that churn is what turns a
+    # transient stall into an endless rebalance cycle.
+    if (
+        already_dead
+        and table is not None
+        and not any(entry.node_id == dead_node for entry in table.assignment.values())
+    ):
+        return view
     incarnation = member.incarnation if member else 1
     view = apply_gossip(view, Dead(node_id=dead_node, incarnation=incarnation, by_node=by_node))
-    table = view.routing
     if table is None:
         return view
 

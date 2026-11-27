@@ -39,5 +39,6 @@ elapsed = time.perf_counter() - start
 
 tokens = int(out.shape[1] - prompt_len)
 text = tok.decode(out[0][prompt_len:], skip_special_tokens=True)
-print(json.dumps({"ok": True, "text": text, "tokens": tokens, "elapsed_seconds": round(elapsed, 4)}))
+result = {"ok": True, "text": text, "tokens": tokens, "elapsed_seconds": round(elapsed, 4)}
+print(json.dumps(result))
 sys.stdout.flush()

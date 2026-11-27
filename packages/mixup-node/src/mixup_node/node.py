@@ -58,6 +58,12 @@ PING_TIMEOUT = 5.0
 SUSPECT_TIMEOUT = 10.0
 INDIRECT_K = 2
 
+DEAD_REPROBE_INTERVAL = 5.0
+"""How often (seconds) to re-probe a dead peer when no alive peer remains. A transient
+stall (e.g. an expert reload holding the GIL) can make a node mark a still-alive peer
+DEAD; re-probing it lets the peer's ack resurrect it instead of leaving a permanent
+partition. This is what heals the mutual-death / "no peer to ping" livelock."""
+
 REPLAN_MIN_TOKENS = 50
 """Minimum observed tokens before the leader re-places experts from activation stats."""
 
@@ -138,6 +144,8 @@ class Node:
         self._kv_seq = 0  # global monotonic token count (election freshness + dedup)
         self.kv_sync_every = env.config.kv_sync_every
         self._peer_idx = 0  # round-robin cursor for gossip peer selection
+        self._dead_reprobe_at = 0.0  # next time we may re-probe a dead peer
+        self._no_peer_statuses: dict[str, str] | None = None  # last logged "no peer" state
         self._trace: TraceBuffer | None = None  # leader's activation stats (Phase 2)
         self._commit_log = CommitLog()  # replicated commit log (Phase 5)
         self._commit: CommitTracker | None = None  # leader's commit quorum (Phase 5)
@@ -547,28 +555,30 @@ class Node:
             past = cache_from_bytes(base64.b64decode(state.cache_b64), device)
             nxt = torch.tensor([state.next_token], device=device)
             full = state.input_ids[prompt_len:]
-            committed = self._commit_log.committed
-            # Resume exactly from the committed watermark. The commit is all-or-nothing
-            # (the KV snapshot is aligned with the full generation), so committed == len(full)
-            # when a majority acked the whole log; if fewer acked we truncate and the tail
-            # is regenerated (approximate only in the rare follower-down case).
-            generated_ids: list[int] = full[:committed]
+            # Resume from the full warm snapshot, not the commit-log watermark. The KV
+            # snapshot is broadcast every ``kv_sync_every`` tokens and is a self-consistent
+            # checkpoint (input_ids + cache + next token); the commit log is only replicated
+            # at the *end* of generation (commit-before-emit), so ``committed`` is 0 during
+            # a mid-generation failover. Truncating to it dropped every already-generated
+            # token and returned a mid-sentence fragment.
+            generated_ids: list[int] = list(full)
             remaining = max(0, max_new_tokens - len(generated_ids))
             logger.info(
-                "resuming warm cache: %d committed of %d total, %d left",
-                committed,
+                "resuming warm cache: %d of %d tokens already generated, %d left",
                 len(full),
+                max_new_tokens,
                 remaining,
             )
+            if remaining <= 0:
+                # Already fully generated (the response was lost in flight): return the
+                # complete text rather than an empty string.
+                logger.info("generation already complete")
+                return self.tokenizer.decode(full), len(full), 0.0, 0.0, 0.0
         else:
             past = None
             nxt = None
             generated_ids = []
             remaining = max_new_tokens
-
-        if remaining <= 0:
-            logger.info("generation already complete")
-            return "", 0, 0.0, 0.0, 0.0
 
         metrics = MetricsCollector(self.name, prompt, max_new_tokens)
         self.dispatcher.metrics = metrics
@@ -778,25 +788,47 @@ class Node:
             self._send_gossip(dest, encode_gossip(reply))
 
     def _choose_peer(self, exclude: frozenset[str]) -> str | None:
-        """Round-robin over the alive peers so every node gets probed (not just the first)."""
+        """Round-robin over the alive peers so every node gets probed (not just the first).
+
+        When no alive peer remains, re-probe a dead peer at a reduced rate so a falsely-dead
+        node can revive (its ack resurrects it). The "no peer" situation is only logged when
+        it changes, so an isolated node doesn't flood the log every gossip interval.
+        """
+        members = self.engine.view.members
         alive = [
             m.node_id
-            for m in self.engine.view.members.values()
+            for m in members.values()
             if m.status == MemberStatus.ALIVE
             and m.node_id != self.name
             and m.node_id not in exclude
         ]
-        if not alive:
-            statuses = {m.node_id: m.status.value for m in self.engine.view.members.values()}
+        if alive:
+            peer = alive[self._peer_idx % len(alive)]
+            self._peer_idx += 1
+            return peer
+
+        dead = [
+            m.node_id
+            for m in members.values()
+            if m.status == MemberStatus.DEAD
+            and m.node_id != self.name
+            and m.node_id not in exclude
+        ]
+        if dead and time.monotonic() >= self._dead_reprobe_at:
+            self._dead_reprobe_at = time.monotonic() + DEAD_REPROBE_INTERVAL
+            peer = dead[self._peer_idx % len(dead)]
+            self._peer_idx += 1
+            return peer
+
+        statuses = {m.node_id: m.status.value for m in members.values()}
+        if statuses != self._no_peer_statuses:
+            self._no_peer_statuses = statuses
             logger.info(
-                "gossip: no peer to ping (statuses=%s exclude=%s)",
+                "gossip: no alive peer to ping (statuses=%s exclude=%s)",
                 statuses,
                 sorted(exclude),
             )
-            return None
-        peer = alive[self._peer_idx % len(alive)]
-        self._peer_idx += 1
-        return peer
+        return None
 
     def _send_gossip(self, dest: str | None, msg: dict) -> None:
         """Send an encoded gossip message to ``dest`` (``None`` = broadcast to all peers).
