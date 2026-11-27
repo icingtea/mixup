@@ -11,7 +11,12 @@ def node_urls(config: StartupConfig) -> dict[str, str]:
     order) on ``EXTERNAL_PORT_BASE + 1 + offset``. Using the full ``nodes`` roster (rather
     than just ``experts``) keeps the mapping correct when the leader also owns experts
     (leader-as-owner) and matches ``mixup-lab``. The REPL and the gateway both use this.
+
+    When the config carries explicit ``endpoints`` (a cross-host deployment), those URLs
+    are used directly instead of the local port mapping.
     """
+    if config.endpoints:
+        return {name: config.endpoints[name].http for name in config.nodes}
     urls = {config.initial_leader: f"http://localhost:{EXTERNAL_PORT_BASE}"}
     others = [n for n in config.nodes if n != config.initial_leader]
     for offset, name in enumerate(others):

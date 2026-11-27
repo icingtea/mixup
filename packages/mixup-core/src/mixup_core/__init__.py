@@ -28,6 +28,7 @@ from .election import (
     promote,
     should_become_leader,
 )
+from .endpoints import EndpointResolver
 from .env import (
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_PROMPT,
@@ -97,6 +98,7 @@ from .types import (
     GenerateResponse,
     Incarnation,
     MemberStatus,
+    NodeEndpoint,
     NodeId,
     NodePriority,
     NodeRole,
@@ -120,7 +122,9 @@ __all__ = [
     "Incarnation",
     "NodeId",
     "NodePriority",
+    "NodeEndpoint",
     "NodeEnv",
+    "EndpointResolver",
     "DEFAULT_MAX_NEW_TOKENS",
     "DEFAULT_PROMPT",
     "NODE_ENV_VAR",

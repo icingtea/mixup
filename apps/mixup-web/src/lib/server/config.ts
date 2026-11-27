@@ -10,6 +10,7 @@ export interface StartupConfig {
 	initial_leader: string;
 	nodes: string[];
 	max_new_tokens?: number;
+	endpoints?: Record<string, { http: string }>;
 }
 
 const DEFAULT_MAX_NEW_TOKENS = 500;
@@ -56,6 +57,9 @@ export function gpuNode(): string {
 
 /** Node name -> host HTTP URL (leader on :9000, others on :9001, ...). */
 export function nodeUrls(cfg: StartupConfig): Record<string, string> {
+	if (cfg.endpoints && Object.keys(cfg.endpoints).length > 0) {
+		return Object.fromEntries(cfg.nodes.map((n) => [n, cfg.endpoints![n].http]));
+	}
 	const urls: Record<string, string> = {};
 	urls[cfg.initial_leader] = `http://localhost:${EXTERNAL_PORT_BASE}`;
 	const others = cfg.nodes.filter((n) => n !== cfg.initial_leader);

@@ -6,7 +6,7 @@ nodes depend on, so it stays free of torch/docker/fastapi: pure pydantic.
 
 from enum import StrEnum
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 
 from .base import StrictModel
 
@@ -36,6 +36,39 @@ ExpertAlloc = dict[ContainerName, ExpertList]
 
 ExpertRoute = tuple[ContainerName, int]
 """Where an expert lives: (node name, its local slot index on that node)."""
+
+
+class NodeEndpoint(StrictModel):
+    """How the rest of the cluster reaches one node, for cross-host deployments.
+
+    ``http`` is the control-plane base URL (no trailing slash); ``expert_host`` and
+    ``expert_port`` are the raw-TCP expert data plane. When a node has no entry in
+    ``StartupConfig.endpoints``, the single-host Docker defaults apply (the container
+    name on the Docker network, ports ``INTERNAL_PORT`` / ``EXPERT_PORT``).
+    """
+
+    http: str
+    """Control-plane base URL, e.g. ``http://100.102.170.72:9000``."""
+
+    expert_host: str
+    """Host for the raw-TCP expert data plane, e.g. ``100.102.170.72``."""
+
+    expert_port: int = 8001
+    """Published port for the expert data plane (defaults to the in-cluster port)."""
+
+    @field_validator("http")
+    @classmethod
+    def _http_scheme(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")):
+            raise ValueError(f"endpoint http must be an http(s) URL, got {value!r}")
+        return value
+
+    @field_validator("expert_host")
+    @classmethod
+    def _expert_host_nonempty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("endpoint expert_host must not be empty")
+        return value
 
 
 class NodeRole(StrEnum):
@@ -74,6 +107,13 @@ class StartupConfig(StrictModel):
     experts: ExpertAlloc
     """The initial expert assignment (the leader holds none)."""
 
+    endpoints: dict[ContainerName, NodeEndpoint] = {}
+    """Per-node reachability for cross-host deployments.
+
+    Empty for the single-host lab, in which case nodes fall back to Docker container
+    names. When non-empty it must map every node in ``nodes`` (and nothing else).
+    """
+
     kv_sync_every: int = 5
     """How often (in generated tokens) the leader broadcasts its warm KV cache to peers."""
 
@@ -101,6 +141,21 @@ class StartupConfig(StrictModel):
                     raise ValueError(f"expert {expert} is assigned to more than one node")
                 seen.add(expert)
         return value
+
+    @model_validator(mode="after")
+    def _endpoints_cover_roster(self) -> "StartupConfig":
+        """If endpoints are given, they must cover exactly the roster (no more, no less)."""
+        if not self.endpoints:
+            return self
+        roster = set(self.nodes)
+        endpoint_nodes = set(self.endpoints)
+        missing = sorted(roster - endpoint_nodes)
+        extra = sorted(endpoint_nodes - roster)
+        if missing or extra:
+            raise ValueError(
+                f"endpoints must match nodes exactly: missing={missing} extra={extra}"
+            )
+        return self
 
     def initial_role(self, name: ContainerName) -> NodeRole:
         """The role `name` starts in."""

@@ -20,7 +20,7 @@ import torch
 from requests.exceptions import RequestException
 from torch import Tensor
 
-from mixup_core.constants import EXPERT_PORT, address
+from mixup_core.endpoints import EndpointResolver
 from mixup_core.fits import fit_linear
 from mixup_core.runtime import RoutingTable
 from mixup_core.stats import TraceBuffer
@@ -54,6 +54,8 @@ class Dispatcher:
         name: str,
         table: RoutingTable,
         on_failure: Callable[[str], RoutingTable],
+        *,
+        resolver: EndpointResolver,
         max_retries: int = 2,
         stats: TraceBuffer | None = None,
         predictor: object | None = None,
@@ -66,6 +68,7 @@ class Dispatcher:
         self.stats = stats  # optional activation-statistics recorder (leader only)
         self.predictor = predictor  # optional next-layer predictor (leader only)
         self.num_experts = num_experts
+        self.resolver = resolver  # node -> control/expert endpoints
         self._token_layers: list[list[int]] = []
         self._prev_hidden: Tensor | None = None
         self._prev_experts: list[int] = []
@@ -161,7 +164,8 @@ class Dispatcher:
         """
         conn = self._connections.get(container)
         if conn is None:
-            conn = TCPConnection(container, EXPERT_PORT, timeout=10.0)
+            host, port = self.resolver.expert(container)
+            conn = TCPConnection(host, port, timeout=10.0)
             self._connections[container] = conn
         return conn
 
@@ -322,7 +326,9 @@ class Dispatcher:
             ready = False
             while time.monotonic() < deadline:
                 try:
-                    response = self._session.get(f"{address(container)}/health", timeout=2)
+                    response = self._session.get(
+                        f"{self.resolver.http(container)}/health", timeout=2
+                    )
                     if response.json().get("ready"):
                         ready = True
                         break

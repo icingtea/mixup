@@ -16,7 +16,7 @@ import torch
 from requests.exceptions import RequestException
 from transformers import AutoTokenizer, GraniteMoeConfig, GraniteMoeForCausalLM
 
-from mixup_core.constants import MODEL_DIR, MODEL_FILE, address
+from mixup_core.constants import MODEL_DIR, MODEL_FILE
 from mixup_core.devices import DeviceProfile, ProfileMode
 from mixup_core.election import (
     apply_leader_announcement,
@@ -24,6 +24,7 @@ from mixup_core.election import (
     promote,
     should_become_leader,
 )
+from mixup_core.endpoints import EndpointResolver
 from mixup_core.env import NodeEnv
 from mixup_core.gossip import Ack, Alive, apply_gossip, decode_gossip, encode_gossip
 from mixup_core.gossip_engine import GossipEngine
@@ -96,7 +97,7 @@ def _assignment_summary(table: RoutingTable) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def broadcast_routing(view: ClusterView, by_node: str) -> None:
+def broadcast_routing(view: ClusterView, by_node: str, resolver: EndpointResolver) -> None:
     """Push the current routing table to every expert node (so they load new experts).
 
     Iterates the routing table's expert nodes (not the membership roster), so a node that
@@ -110,17 +111,19 @@ def broadcast_routing(view: ClusterView, by_node: str) -> None:
     payload = table.model_dump()
     nodes = sorted({entry.node_id for entry in table.assignment.values()})
     threading.Thread(
-        target=_broadcast_routing, args=(payload, nodes, table.epoch), daemon=True
+        target=_broadcast_routing, args=(payload, nodes, table.epoch, resolver), daemon=True
     ).start()
 
 
-def _broadcast_routing(payload: dict, nodes: list[str], epoch: int) -> None:
+def _broadcast_routing(
+    payload: dict, nodes: list[str], epoch: int, resolver: EndpointResolver
+) -> None:
     """Best-effort push of ``payload`` to ``nodes`` (2 short retries each)."""
     for node_id in nodes:
         sent = False
         for _ in range(2):
             try:
-                requests.post(f"{address(node_id)}/routing", json=payload, timeout=2)
+                requests.post(f"{resolver.http(node_id)}/routing", json=payload, timeout=2)
                 logger.info("broadcast: sent routing epoch %d to %s", epoch, node_id)
                 sent = True
                 break
@@ -137,6 +140,7 @@ class Node:
         self.env = env
         self.name = env.container_name
         self.model_config = model_config
+        self.resolver = EndpointResolver(env.config)
         self.role: NodeRole = env.config.initial_role(self.name)
         self.ready = False
         self.expert_group: ExpertGroup | None = None
@@ -212,7 +216,9 @@ class Node:
                 if name == self.name:
                     continue
                 try:
-                    projection = requests.get(f"{address(name)}/leader", timeout=0.5).json()
+                    projection = requests.get(
+                        f"{self.resolver.http(name)}/leader", timeout=0.5
+                    ).json()
                 except (RequestException, ValueError):
                     continue
                 leader = projection.get("leader")
@@ -267,6 +273,7 @@ class Node:
             self.name,
             view.routing,
             self._on_expert_failure,
+            resolver=self.resolver,
             stats=self._trace,
             predictor=self.predictor,
             num_experts=num_experts,
@@ -324,7 +331,7 @@ class Node:
 
     def _post_predictor(self, name: str, payload: dict) -> None:
         with contextlib.suppress(RequestException):
-            requests.post(f"{address(name)}/predictor", json=payload, timeout=5)
+            requests.post(f"{self.resolver.http(name)}/predictor", json=payload, timeout=5)
 
     def store_predictor(self, body: dict) -> None:
         """Store synced predictor weights (follower); freshest version wins."""
@@ -378,7 +385,7 @@ class Node:
         if new_table is not None:
             if self.expert_group is not None:
                 self.expert_group.set_routing(new_table)
-            broadcast_routing(view, self.name)
+            broadcast_routing(view, self.name, self.resolver)
         assert new_table is not None
         return new_table
 
@@ -399,7 +406,7 @@ class Node:
             return False
         if self.expert_group is not None:
             self.expert_group.set_routing(table)
-        broadcast_routing(self.engine.view, self.name)
+        broadcast_routing(self.engine.view, self.name, self.resolver)
         return True
 
     def _effective_profiles(self) -> dict[str, DeviceProfile]:
@@ -527,7 +534,7 @@ class Node:
         me = self.engine.view.members[self.name]
         try:
             requests.post(
-                f"{address(leader)}/join",
+                f"{self.resolver.http(leader)}/join",
                 json={"node_id": self.name, "incarnation": me.incarnation},
                 timeout=5,
             )
@@ -574,7 +581,7 @@ class Node:
             return v
 
         new_view = self.engine.mutate(_rebalance)
-        broadcast_routing(new_view, self.name)
+        broadcast_routing(new_view, self.name, self.resolver)
         logger.info("%s: rebalanced after %s rejoined", self.name, node_id)
 
     def _announce_leader(self) -> None:
@@ -586,7 +593,7 @@ class Node:
             if name == self.name:
                 continue
             try:
-                requests.post(f"{address(name)}/leader", json=payload, timeout=5)
+                requests.post(f"{self.resolver.http(name)}/leader", json=payload, timeout=5)
             except RequestException:
                 logger.warning("could not announce leader to %s", name)
 
@@ -777,7 +784,7 @@ class Node:
             if name == self.name:
                 continue
             with contextlib.suppress(RequestException):
-                requests.post(f"{address(name)}/kv", data=payload, timeout=5)
+                requests.post(f"{self.resolver.http(name)}/kv", data=payload, timeout=5)
 
     def store_kv(self, body: bytes) -> None:
         """Store a warm KV-cache snapshot from the leader (freshest wins).
@@ -836,7 +843,7 @@ class Node:
             if name == self.name:
                 continue
             try:
-                resp = requests.post(f"{address(name)}/commit", json=payload, timeout=5)
+                resp = requests.post(f"{self.resolver.http(name)}/commit", json=payload, timeout=5)
                 acked = resp.json().get("acked", 0)
                 if acked > 0:
                     self._commit.record_acks_through(acked, name)
@@ -931,7 +938,7 @@ class Node:
     def _post_gossip(self, targets: list[str], msg: dict) -> None:
         for target in targets:
             with contextlib.suppress(RequestException):
-                requests.post(f"{address(target)}/gossip", json=msg, timeout=2)
+                requests.post(f"{self.resolver.http(target)}/gossip", json=msg, timeout=2)
 
     def _on_member_dead(self, node_id: str) -> None:
         """A peer was declared dead by the gossip loop: elect a successor or rebalance.
