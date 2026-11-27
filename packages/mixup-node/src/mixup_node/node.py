@@ -55,6 +55,14 @@ REPLAN_MIN_TOKENS = 50
 """Minimum observed tokens before the leader re-places experts from activation stats."""
 
 
+def _assignment_summary(table: RoutingTable) -> dict[str, int]:
+    """Per-node expert counts, for logging placement changes."""
+    counts: dict[str, int] = {}
+    for entry in table.assignment.values():
+        counts[entry.node_id] = counts.get(entry.node_id, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def broadcast_routing(view: ClusterView, by_node: str) -> None:
     """Push the current routing table to every expert node (so they load new experts).
 
@@ -233,10 +241,17 @@ class Node:
         Returns the new table (epoch bumped) if it changed, else ``None``. Skipped when the
         cluster has no profiles (classic single-node-GPU setup) or too few observed tokens.
         """
-        if not self.env.profiles or self._trace is None:
+        if not self.env.profiles:
+            logger.info("%s: replan skipped (no profiles)", self.name)
+            return None
+        if self._trace is None:
+            logger.info("%s: replan skipped (no trace)", self.name)
             return None
         stats = self._trace.snapshot()
         if stats.total_tokens < REPLAN_MIN_TOKENS:
+            logger.info(
+                "%s: replan skipped (only %d tokens)", self.name, stats.total_tokens
+            )
             return None
         view = self.engine.view
         assert view.routing is not None
@@ -252,6 +267,11 @@ class Node:
             logger.warning("%s: replan skipped: %s", self.name, exc)
             return None
         if new_table.assignment == view.routing.assignment:
+            logger.info(
+                "%s: replan produced no change (%s)",
+                self.name,
+                _assignment_summary(new_table),
+            )
             return None
         new_view = self.engine.mutate(
             lambda v: ClusterView(members=v.members, routing=new_table)
@@ -262,10 +282,11 @@ class Node:
             self.expert_group.set_routing(new_table)
         broadcast_routing(new_view, self.name)
         logger.info(
-            "%s: replanned from %d observed tokens -> routing epoch %d",
+            "%s: replanned from %d observed tokens -> routing epoch %d (%s)",
             self.name,
             stats.total_tokens,
             new_table.epoch,
+            _assignment_summary(new_table),
         )
         return new_table
 

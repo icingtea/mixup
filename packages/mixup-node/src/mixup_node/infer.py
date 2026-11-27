@@ -86,6 +86,12 @@ def build_app(node: Node) -> FastAPI:
         table = node.replan()
         return {"ok": True, "epoch": table.epoch if table else None}
 
+    @app.get("/stats")
+    async def stats() -> dict:
+        if node._trace is None:
+            return {"total_tokens": 0}
+        return {"total_tokens": node._trace.tokens}
+
     @app.post("/generate")
     def generate(request: GenerateRequest) -> dict:
         if node.model is None:

@@ -158,3 +158,32 @@ def test_violation_zero_within_budget() -> None:
 def test_cost_model_is_built() -> None:
     p = _problem()
     assert isinstance(p.cost, CostModel)
+
+
+def test_churn_amortization_gates_moves() -> None:
+    """A beneficial move is accepted when churn is amortized, rejected when it is not."""
+    stats = _stats(num_layers=1, num_experts=2)
+    for _ in range(8):
+        stats.record([[0, 1]])
+    profiles = {
+        "fast": _gpu("fast", per=0.1),
+        "slow": _cpu("slow", per=10.0),
+    }
+
+    def make(amortize: int) -> PlacementProblem:
+        return PlacementProblem(
+            num_experts=2,
+            profiles=profiles,
+            stats=stats,
+            rtt_ms={"fast": 0.0, "slow": 0.0},
+            leader="fast",
+            expert_bytes=75_500_000,
+            prev={0: "slow", 1: "slow"},
+            churn_amortize_tokens=amortize,
+        )
+
+    amortized = LatencyPolicy(max_iters=5, num_samples=16, seed=0).place(make(1000))
+    assert amortized[0] == "fast" and amortized[1] == "fast"  # moved off the slow node
+
+    not_amortized = LatencyPolicy(max_iters=5, num_samples=16, seed=0).place(make(1))
+    assert not_amortized[0] == "slow" and not_amortized[1] == "slow"  # churn too costly

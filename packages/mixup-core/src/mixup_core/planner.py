@@ -46,6 +46,7 @@ def plan_routing(
     num_samples: int = 32,
     max_iters: int = 20,
     seed: int = 0,
+    churn_amortize_tokens: int = 1000,
 ) -> RoutingTable:
     """Compute a resource-aware ``expert -> node`` assignment and wrap it in a table.
 
@@ -63,6 +64,7 @@ def plan_routing(
         dense_ms=dense_ms,
         budget_bytes=budget_bytes,
         prev=_assignment_from_table(prev_table),
+        churn_amortize_tokens=churn_amortize_tokens,
     )
     policy_obj = {
         "latency": LatencyPolicy(max_iters=max_iters, num_samples=num_samples, seed=seed),

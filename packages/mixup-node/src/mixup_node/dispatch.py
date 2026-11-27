@@ -74,10 +74,12 @@ class Dispatcher:
     ) -> Tensor:
         if layer == 0:
             self._token += 1
-            if self.stats is not None:
+        # Record activation stats for *decode* tokens only (single-token shape (1, k)).
+        # The prefill is batched (shape (prompt_len, k)) and would skew the per-token stats.
+        if self.stats is not None and top_k_index.shape[0] == 1:
+            if layer == 0:
                 self._token_layers = [[] for _ in range(self.stats.num_layers)]
-        if self.stats is not None:
-            self._token_layers[layer] = top_k_index.flatten().tolist()
+            self._token_layers[layer] = top_k_index[0].tolist()
             if layer == self.stats.num_layers - 1:
                 self.stats.record(self._token_layers)
         for _ in range(self.max_retries + 1):

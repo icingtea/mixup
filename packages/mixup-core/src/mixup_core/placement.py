@@ -81,6 +81,15 @@ class PlacementProblem:
     dense_ms: float = 0.0
     prev: dict[ExpertId, NodeId] | None = None
     churn_weight: float = 1.0
+    churn_amortize_tokens: int = 1000
+    """Tokens the new placement is expected to serve; churn cost is amortized over this.
+
+    Moving an expert costs a one-time load (75 MB from disk), while a better placement
+    saves a little per token; comparing a one-token latency against a full-load cost would
+    make the optimizer never move anything. Amortizing churn over the expected horizon
+    makes the comparison apples-to-apples.
+    """
+
     budget_bytes: dict[NodeId, int] | None = None
 
     cost: CostModel = field(init=False)
@@ -177,11 +186,12 @@ def objective(
     num_samples: int = 64,
     seed: int = 0,
 ) -> float:
-    """Minimize this: p95 latency + churn + memory-violation penalty."""
+    """Minimize this: p95 latency + amortized churn + memory-violation penalty."""
     stats = evaluate(problem, assignment, num_samples, seed)
+    amortize = max(1, problem.churn_amortize_tokens)
     return (
         stats.p95_ms
-        + problem.churn_weight * churn_ms(problem, assignment)
+        + problem.churn_weight * churn_ms(problem, assignment) / amortize
         + MEMORY_PENALTY_MS_PER_BYTE * violation_bytes(problem, assignment)
     )
 
@@ -195,12 +205,13 @@ def analyze(
     stats = evaluate(problem, assignment, num_samples, seed)
     churn = churn_ms(problem, assignment)
     violation = violation_bytes(problem, assignment)
+    amortize = max(1, problem.churn_amortize_tokens)
     return PlacementAnalysis(
         stats=stats,
         churn_ms=churn,
         violation_bytes=violation,
         objective_ms=stats.p95_ms
-        + problem.churn_weight * churn
+        + problem.churn_weight * churn / amortize
         + MEMORY_PENALTY_MS_PER_BYTE * violation,
     )
 
