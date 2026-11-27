@@ -441,6 +441,19 @@ class Node:
 
     # -- gossip transport + failure reaction -------------------------------
 
+    def handle_gossip(self, msg: dict) -> None:
+        """Handle an inbound gossip message and send any replies it produces.
+
+        Replies go out asynchronously (the FastAPI handler runs on the event loop, and a
+        synchronous POST could deadlock two nodes pinging each other at once).
+        """
+        decoded = decode_gossip(msg)
+        replies = self.engine.handle(decoded, now=time.monotonic())
+        if isinstance(decoded, Ack):
+            self.loop.on_ack(decoded.node_id)
+        for dest, reply in replies:
+            self._send_gossip(dest, encode_gossip(reply))
+
     def _choose_peer(self, exclude: frozenset[str]) -> str | None:
         """Round-robin over the alive peers so every node gets probed (not just the first)."""
         alive = [
@@ -457,34 +470,23 @@ class Node:
         return peer
 
     def _send_gossip(self, dest: str | None, msg: dict) -> None:
-        """Send an encoded gossip message to ``dest`` (``None`` = broadcast to all peers)."""
+        """Send an encoded gossip message to ``dest`` (``None`` = broadcast to all peers).
+
+        Fire-and-forget: the POST runs on a background thread so the gossip loop never
+        stalls on a slow or dead peer (a synchronous 2s timeout would delay failure
+        detection).
+        """
         targets = (
             [dest]
             if dest is not None
             else [n for n in self.engine.view.members if n != self.name]
         )
+        threading.Thread(target=self._post_gossip, args=(targets, msg), daemon=True).start()
+
+    def _post_gossip(self, targets: list[str], msg: dict) -> None:
         for target in targets:
             with contextlib.suppress(RequestException):
                 requests.post(f"{address(target)}/gossip", json=msg, timeout=2)
-
-    def handle_gossip(self, msg: dict) -> None:
-        """Handle an inbound gossip message and send any replies it produces.
-
-        Replies are sent on a background thread: the FastAPI handler runs on the event
-        loop, and a synchronous reply POST could deadlock two nodes that ping each other
-        at once (each blocking its loop waiting for the other's ack).
-        """
-        decoded = decode_gossip(msg)
-        replies = self.engine.handle(decoded, now=time.monotonic())
-        if isinstance(decoded, Ack):
-            self.loop.on_ack(decoded.node_id)
-        if replies:
-            encoded = [(dest, encode_gossip(reply)) for dest, reply in replies]
-            threading.Thread(target=self._send_gossip_replies, args=(encoded,), daemon=True).start()
-
-    def _send_gossip_replies(self, replies: list[tuple[str | None, dict]]) -> None:
-        for dest, msg in replies:
-            self._send_gossip(dest, msg)
 
     def _on_member_dead(self, node_id: str) -> None:
         """A peer was declared dead by the gossip loop: elect a successor or rebalance.
