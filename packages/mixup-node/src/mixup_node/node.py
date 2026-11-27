@@ -39,6 +39,7 @@ from mixup_core.types import MemberStatus, NodeRole
 from .dispatch import Dispatcher
 from .gossip_loop import GossipLoop
 from .kv_cache import cache_from_bytes, cache_to_bytes
+from .memory import TieredExpertStore
 from .metrics import MetricsCollector
 from .model import ExpertGroup, load_central
 
@@ -203,7 +204,7 @@ class Node:
         view = self.engine.view
         assert view.routing is not None
         if self.expert_group is None:
-            self.expert_group = ExpertGroup(self.name, self.model_config, MODEL_FILE, view.routing)
+            self.expert_group = self._make_expert_group(view.routing)
         self._trace = TraceBuffer(
             self.model_config.num_hidden_layers, self.model_config.num_local_experts or 0
         )
@@ -224,9 +225,17 @@ class Node:
     def _load_experts(self) -> None:
         view = self.engine.view
         assert view.routing is not None
-        self.expert_group = ExpertGroup(self.name, self.model_config, MODEL_FILE, view.routing)
+        self.expert_group = self._make_expert_group(view.routing)
         self.ready = True
         logger.info("%s: %d experts ready", self.name, len(self.expert_group.experts))
+
+    def _make_expert_group(self, table) -> ExpertGroup | TieredExpertStore:
+        """Pick the expert store: tiered (with residency) when a budget is set, else resident."""
+        profile = self.env.profiles.get(self.name)
+        budget = profile.expert_budget_bytes if profile is not None else None
+        if budget is not None:
+            return TieredExpertStore(self.name, self.model_config, MODEL_FILE, profile, budget)
+        return ExpertGroup(self.name, self.model_config, MODEL_FILE, table)
 
     def _on_expert_failure(self, node: str) -> RoutingTable:
         view = self.engine.mutate(lambda v: handle_node_failure(v, node, by_node=self.name))

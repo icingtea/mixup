@@ -46,7 +46,7 @@ assert diff < 1e-2, diff
 
 # Budget: cap the store at 3 resident experts; ensure evicts the rest.
 budget = store._expert_bytes() * 3
-store2 = TieredExpertStore("n", config, MODEL_FILE, profile, budget_bytes={"cpu": budget})
+store2 = TieredExpertStore("n", config, MODEL_FILE, profile, budget_bytes=budget)
 store2.set_ownership(owned)
 for e in owned:
     store2.ensure(0, e)

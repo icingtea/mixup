@@ -38,7 +38,7 @@ class TieredExpertStore:
         model_config: GraniteMoeConfig,
         model_file: Path,
         profile: DeviceProfile,
-        budget_bytes: dict[str, int] | None = None,
+        budget_bytes: int | None = None,
     ) -> None:
         self.name = name
         self.model_config = model_config
@@ -52,12 +52,18 @@ class TieredExpertStore:
         self.owned: set[int] = set()
         # (layer, expert) -> {gate_up, down} on the execution tier.
         self._weights: dict[tuple[int, int], dict[str, Tensor]] = {}
+        budget = {self.execution_tier: budget_bytes} if budget_bytes is not None else {}
         self.residency = Residency(
             profile=profile,
             expert_bytes_per_layer=self._expert_bytes(),
-            budget_bytes=budget_bytes or {},
+            budget_bytes=budget,
         )
         self._file = None  # opened lazily for disk loads
+
+    @property
+    def experts(self) -> list[int]:
+        """The owned expert ids, sorted (mirrors ``ExpertGroup.experts``)."""
+        return sorted(self.owned)
 
     def _expert_bytes(self) -> int:
         hidden = self.model_config.hidden_size
