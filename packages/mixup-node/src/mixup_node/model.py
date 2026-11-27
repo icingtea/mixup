@@ -228,6 +228,6 @@ class ExpertGroup:
         slots = self._slot_or_skip[top_k_index]
         weights = top_k_weights * self._owned[top_k_index]
         out = self.layers[layer](hidden_states, slots, weights)
-        # The wire is bf16 (the leader's residual stream); cast back so the leader's
-        # reduce stays exact regardless of whether this node computed in fp32 or bf16.
-        return out.to(torch.bfloat16)
+        # Return fp32: the leader reduces in fp32 and casts to bf16 once, so the cross-node
+        # sum is order-independent (deterministic across a failover that reshuffles experts).
+        return out.to(torch.float32)

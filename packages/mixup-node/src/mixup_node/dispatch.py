@@ -185,12 +185,13 @@ class Dispatcher:
             )
             for container in chosen
         ]
-        # Expert replies are deserialized on CPU (the wire is CPU); accumulate there and
-        # move the sum back onto the model's device at the end.
+        # Expert replies are deserialized on CPU (the wire is CPU); accumulate in fp32 so
+        # the reduce is order-independent (a node re-shuffle must not change the sum),
+        # then cast back to the residual-stream dtype once at the end.
         reduce_start = time.perf_counter()
-        total = torch.zeros_like(hidden_states, device="cpu")
+        total = torch.zeros(hidden_states.shape, dtype=torch.float32, device="cpu")
         for job in jobs:
-            total += job.result()
+            total += job.result().to(torch.float32)
         if torch.isnan(total).any() or torch.isinf(total).any():
             logger.error("expert reduce produced NaN/inf at token %d layer %d", self._token, layer)
         reduce_time = time.perf_counter() - reduce_start
@@ -213,7 +214,7 @@ class Dispatcher:
                 dispatch=dispatch_time,
                 reduce_=reduce_time,
             )
-        return total.to(hidden_states.device)
+        return total.to(hidden_states.dtype).to(hidden_states.device)
 
     def _send(
         self,

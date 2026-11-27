@@ -42,7 +42,7 @@ for line in sys.stdin:
 
     start = time.perf_counter()
     with torch.no_grad():
-        out = model.generate(ids, max_new_tokens=max_new, do_sample=False)
+        out = model.generate(ids, max_new_tokens=max_new, do_sample=False, repetition_penalty=1.2)
     elapsed = time.perf_counter() - start
 
     tokens = int(out.shape[1] - prompt_len)

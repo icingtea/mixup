@@ -72,6 +72,10 @@ REPLAN_MIN_TOKENS = 50
 REPLAN_INTERVAL_TOKENS = 200
 """Re-evaluate placement every this many observed tokens (after the first re-plan)."""
 
+REPETITION_PENALTY = 1.2
+"""Penalty applied to already-generated tokens before the greedy argmax. Deterministic;
+prevents the greedy decoder from degenerating into a single-token loop on long generations."""
+
 
 def _assignment_summary(table: RoutingTable) -> dict[str, int]:
     """Per-node expert counts, for logging placement changes."""
@@ -680,7 +684,15 @@ class Node:
                     self._commit.record_ack(self._commit.log.next_index - 1, self.name)
                 out = self.model(input_ids=nxt.unsqueeze(0), cache=past, use_cache=True)
                 past = out.cache
-                nxt = out.logits[:, -1, :].argmax(dim=-1)
+                logits = out.logits[:, -1, :]
+                # Repetition penalty: discourage re-emitting an already-generated token so
+                # greedy decoding can't lock into a single-token loop on long generations.
+                for prev in generated_ids:
+                    score = logits[0, prev]
+                    logits[0, prev] = (
+                        score * REPETITION_PENALTY if score < 0 else score / REPETITION_PENALTY
+                    )
+                nxt = logits.argmax(dim=-1)
 
         elapsed = time.perf_counter() - start
         generated = len(generated_ids)

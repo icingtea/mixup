@@ -169,7 +169,9 @@ class TieredExpertStore:
         top_k_weights = top_k_weights.to(device, self.dtype)  # (T, K)
 
         # Accumulate in fp32 (like the model's grouped_mm path, which sums in fp32 to
-        # avoid bf16 accumulation error); cast back to bf16 only at the wire boundary.
+        # avoid bf16 accumulation error). Return fp32: the leader reduces in fp32 and casts
+        # to bf16 once, so the cross-node sum is order-independent (deterministic across a
+        # failover that reshuffles which node owns which expert).
         out = torch.zeros(hidden.shape, dtype=torch.float32, device=device)
         num_tokens, top_k = top_k_index.shape
         for token in range(num_tokens):
@@ -182,7 +184,7 @@ class TieredExpertStore:
                 y = F.silu(gate) * up
                 y = F.linear(y, w["down"])
                 out[token] += (y * top_k_weights[token, pos]).to(torch.float32)
-        return out.to(torch.bfloat16)
+        return out
 
     def resident_experts(self) -> int:
         return len(self._weights)
