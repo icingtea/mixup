@@ -6,9 +6,10 @@ backup holder rather than re-sharding the whole pool — the report's §3.8 mech
 Experts whose backup is also gone fall back to normal re-placement.
 """
 
-from .runtime import RoutingEntry, RoutingTable
-from .scheduler import finalize
-from .types import ExpertId, NodeId
+from .gossip import Dead, apply_gossip
+from .runtime import ClusterView, RoutingEntry, RoutingTable
+from .scheduler import LeastLoadedPolicy, finalize
+from .types import ExpertId, MemberStatus, NodeId
 
 
 def plan_backups(table: RoutingTable, alive: set[NodeId]) -> RoutingTable:
@@ -51,3 +52,33 @@ def promote_backups(
 
     new_table = finalize(primary, table.epoch + 1)
     return plan_backups(new_table, alive), orphans
+
+
+def failover_with_backups(
+    view: ClusterView,
+    dead_node: NodeId,
+    by_node: NodeId,
+    policy: object | None = None,
+) -> ClusterView:
+    """Mark ``dead_node`` DEAD, promote its experts' backups, and re-place any orphans.
+
+    The full replica-aware failover: experts whose backup is alive go straight to that
+    backup; experts with no surviving backup fall back to ``policy`` (least-loaded by
+    default). Returns a new view whose routing (epoch bumped) still covers every expert.
+    """
+    member = view.members.get(dead_node)
+    incarnation = member.incarnation if member else 1
+    view = apply_gossip(view, Dead(node_id=dead_node, incarnation=incarnation, by_node=by_node))
+    table = view.routing
+    if table is None:
+        return view
+
+    alive = {m.node_id for m in view.members.values() if m.status == MemberStatus.ALIVE}
+    new_table, orphans = promote_backups(table, dead_node, alive)
+    if orphans:
+        placement = (policy or LeastLoadedPolicy()).place(view, orphans)
+        primary = {e: entry.node_id for e, entry in new_table.assignment.items()}
+        primary.update(placement)
+        new_table = finalize(primary, new_table.epoch + 1)
+        new_table = plan_backups(new_table, alive)
+    return ClusterView(members=view.members, routing=new_table)

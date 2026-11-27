@@ -1,7 +1,23 @@
 """Tests for replica-aware failover: backup assignment and promotion."""
 
-from mixup_core.replica import plan_backups, promote_backups
-from mixup_core.runtime import RoutingEntry, RoutingTable
+from mixup_core.replica import failover_with_backups, plan_backups, promote_backups
+from mixup_core.runtime import ClusterView, MemberState, RoutingEntry, RoutingTable
+from mixup_core.types import MemberStatus, NodeRole
+
+
+def _view(*members: MemberState) -> ClusterView:
+    return ClusterView(members={m.node_id: m for m in members})
+
+
+def _member(node: str) -> MemberState:
+    return MemberState(
+        node_id=node,
+        role=NodeRole.EXPERT,
+        status=MemberStatus.ALIVE,
+        epoch=0,
+        incarnation=1,
+        priority=1,
+    )
 
 
 def _table(blocks: dict[str, tuple[int, int]]) -> RoutingTable:
@@ -58,3 +74,29 @@ def test_promote_backups_keeps_survivors() -> None:
     assert orphans == []
     assert set(new_table.assignment) == set(range(12))
     assert new_table.assignment[0].node_id == "a"
+
+
+def test_failover_promotes_backup_and_marks_dead() -> None:
+    view = _view(_member("a"), _member("b"), _member("c"))
+    view = ClusterView(
+        members=view.members,
+        routing=plan_backups(_table({"a": (0, 5), "b": (6, 11)}), {"a", "b", "c"}),
+    )
+    out = failover_with_backups(view, "a", "c")
+    assert out.members["a"].status is MemberStatus.DEAD
+    # a's experts (0-5) went to their backups (b or c); coverage preserved.
+    assert set(out.routing.assignment) == set(range(12))
+    assert all(out.routing.assignment[e].node_id != "a" for e in range(12))
+
+
+def test_failover_double_failure_replaces_orphans() -> None:
+    view = _view(_member("a"), _member("b"), _member("c"))
+    view = ClusterView(
+        members=view.members,
+        routing=plan_backups(_table({"a": (0, 5), "b": (6, 11)}), {"a", "b", "c"}),
+    )
+    # a dies, then b dies -> only c survives; everything ends up on c.
+    out = failover_with_backups(view, "a", "c")
+    out = failover_with_backups(out, "b", "c")
+    assert set(out.routing.assignment) == set(range(12))
+    assert all(out.routing.assignment[e].node_id == "c" for e in range(12))

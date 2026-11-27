@@ -27,11 +27,11 @@ from mixup_core.gossip import Ack, Alive, apply_gossip, decode_gossip, encode_go
 from mixup_core.gossip_engine import GossipEngine
 from mixup_core.kvledger import KvState, decode_kv_state, encode_kv_state
 from mixup_core.planner import plan_routing
+from mixup_core.replica import failover_with_backups, plan_backups
 from mixup_core.runtime import ClusterView, RoutingTable
 from mixup_core.scheduler import (
     LeastLoadedPolicy,
     balance_experts,
-    handle_node_failure,
 )
 from mixup_core.stats import TraceBuffer
 from mixup_core.types import MemberStatus, NodeRole
@@ -243,7 +243,7 @@ class Node:
         return ExpertGroup(self.name, self.model_config, MODEL_FILE, table)
 
     def _on_expert_failure(self, node: str) -> RoutingTable:
-        view = self.engine.mutate(lambda v: handle_node_failure(v, node, by_node=self.name))
+        view = self.engine.mutate(lambda v: failover_with_backups(v, node, by_node=self.name))
         new_table = view.routing
         if new_table is not None:
             broadcast_routing(view, self.name)
@@ -287,6 +287,11 @@ class Node:
         except ValueError as exc:
             logger.warning("%s: replan skipped: %s", self.name, exc)
             return None
+        # Assign replica backups (Phase 4): each expert gets a backup on a different node.
+        alive = {
+            m.node_id for m in self.engine.view.members.values() if m.status == MemberStatus.ALIVE
+        }
+        new_table = plan_backups(new_table, alive)
         if new_table.assignment == view.routing.assignment:
             logger.info(
                 "%s: replan produced no change (%s)",
