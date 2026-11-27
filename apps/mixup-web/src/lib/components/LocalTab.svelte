@@ -6,7 +6,7 @@
 		const res = await fetch('/api/local', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ prompt, max_new_tokens: 60 })
+			body: JSON.stringify({ prompt })
 		});
 		const d = (await res.json()) as LocalBenchResult;
 		if (!d.ok) {

@@ -53,7 +53,7 @@
 		const res = await fetch('/api/generate', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ prompt, max_new_tokens: 80 })
+			body: JSON.stringify({ prompt })
 		});
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		return (await res.json()) as GenerateResult;

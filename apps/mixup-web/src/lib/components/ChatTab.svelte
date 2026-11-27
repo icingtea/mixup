@@ -31,11 +31,7 @@
 		if (total === 0) return undefined;
 		const distinct = counts.filter((c) => c > 0).length;
 		const max = Math.max(1, ...counts);
-		const top = counts
-			.map((c, e) => ({ e, c }))
-			.filter((t) => t.c > 0)
-			.sort((a, b) => b.c - a.c)
-			.slice(0, 12);
+		const top = counts.map((c, e) => ({ e, c })).sort((a, b) => b.c - a.c);
 		return { top, distinct, total, max };
 	}
 

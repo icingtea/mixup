@@ -184,7 +184,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--config", default="startup_config.json", help="startup_config.json or lab_config.json"
     )
-    parser.add_argument("--max-new-tokens", type=int, default=50)
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=None,
+        help="generation length (defaults to the config's max_new_tokens, else 500)",
+    )
     parser.add_argument(
         "--timeout", type=float, default=2.0, help="per-node discovery timeout (seconds)"
     )
@@ -197,13 +202,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.local:
-        return run_local(args.prompt, args.max_new_tokens, args.model_dir)
+        return run_local(args.prompt, args.max_new_tokens or 500, args.model_dir)
     if args.prompt is None:
         parser.error("a prompt is required unless --local is given")
 
     config = load_startup_config(args.config)
+    max_new_tokens = (
+        args.max_new_tokens
+        if args.max_new_tokens is not None
+        else getattr(config, "max_new_tokens", 500)
+    )
     client = ClusterClient(node_urls(config), discover_timeout=args.timeout)
-    request = GenerateRequest(prompt=args.prompt, max_new_tokens=args.max_new_tokens)
+    request = GenerateRequest(prompt=args.prompt, max_new_tokens=max_new_tokens)
 
     result = client.generate(request, retries=args.retries, backoff=args.backoff)
     if result is None:

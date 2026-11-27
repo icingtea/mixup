@@ -79,6 +79,9 @@ class StartupConfig(BaseModel):
     """The next-layer predictor to train: ``"lr"`` (logistic regression) or ``"mlp"``
     (CoMoE's 2-layer MLP, the default)."""
 
+    max_new_tokens: int = 500
+    """Default generation length when a client doesn't specify one."""
+
     @field_validator("experts")
     @classmethod
     def _experts_unique(cls, value: ExpertAlloc) -> ExpertAlloc:
@@ -100,7 +103,7 @@ class GenerateRequest(BaseModel):
     """A generation request sent to the leader's ``POST /generate``."""
 
     prompt: str
-    max_new_tokens: int = 50
+    max_new_tokens: int = 500
 
 
 class GenerateResponse(BaseModel):

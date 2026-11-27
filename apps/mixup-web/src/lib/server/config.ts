@@ -9,7 +9,10 @@ const EXTERNAL_PORT_BASE = 9000;
 export interface StartupConfig {
 	initial_leader: string;
 	nodes: string[];
+	max_new_tokens?: number;
 }
+
+const DEFAULT_MAX_NEW_TOKENS = 500;
 
 function findConfig(): string {
 	const env = process.env.MIXUP_CONFIG;
@@ -34,6 +37,11 @@ function findConfig(): string {
 export function loadStartup(): StartupConfig {
 	const raw = JSON.parse(readFileSync(findConfig(), 'utf8'));
 	return (raw.startup ?? raw) as StartupConfig;
+}
+
+/** Default generation length from the config (``max_new_tokens``), else 500. */
+export function maxNewTokens(): number {
+	return loadStartup().max_new_tokens ?? DEFAULT_MAX_NEW_TOKENS;
 }
 
 /** The first node with a GPU execution profile (used for the local baseline). */
