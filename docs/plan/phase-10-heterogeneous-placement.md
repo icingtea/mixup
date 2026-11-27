@@ -149,5 +149,16 @@ note. No phase merges on "works on my laptop".
 - **Fixed: leader's own store not updated on failover.** `_on_expert_failure` relied on the
   loopback `/routing` broadcast, but that carries the same epoch the view already holds, so
   the staleness guard ignored it. Now updates the leader's store/dispatcher directly.
+- **Fixed: scheduler stripped leader-as-owner experts.** `rebalance/balance_experts`
+  filtered `role==EXPERT`, so the leader's experts were redistributed away on failover/rejoin.
+  Every alive node is now an eligible owner.
 - Validated: killing an expert promotes its backups (8 → 13 experts on the leader) with
   full coverage (32) and correct generation.
+
+## Known issues (Phase 4)
+
+- **Expert rejoin (restarting a killed node) is flaky.** A restarted node's revival
+  sometimes doesn't stick — the gossip loop re-marks it dead before its own gossip loop
+  starts (which begins only after model load). Failover works; rejoin needs the gossip
+  loop to start before model load, or an explicit revival retry. The fresh time-based
+  incarnation is in place (so a restart is distinguishable) but the timing still races.
