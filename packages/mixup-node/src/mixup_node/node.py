@@ -20,6 +20,7 @@ from mixup_core.constants import MODEL_DIR, MODEL_FILE, address
 from mixup_core.election import (
     apply_leader_announcement,
     current_leader,
+    promote,
     should_become_leader,
 )
 from mixup_core.env import NodeEnv
@@ -203,12 +204,14 @@ class Node:
         """Load the dense model and (if we own experts) keep/load our experts, then lead.
 
         Leader-as-owner (Phase 1): instead of shedding our experts on promotion, we keep
-        them and serve them alongside the dense model. The expert TCP server already
-        dispatches to ``self.expert_group``, and the dispatcher routes to ``self.name`` over
-        loopback, so no special local path is needed.
+        them and serve them alongside the dense model. We promote in the view *first*
+        (bump epoch + set role), announce immediately, and only then load the dense model;
+        ``ready`` flips at the end, so a client polling ``/health`` waits for the load
+        instead of hammering ``/generate`` with 503s.
         """
-        view = self.engine.view
+        view = self.engine.mutate(lambda v: promote(v, self.name))
         assert view.routing is not None
+        self.role = NodeRole.LEADER
         if self.expert_group is None:
             self.expert_group = self._make_expert_group(view.routing)
         self._trace = TraceBuffer(
@@ -217,16 +220,15 @@ class Node:
         self.dispatcher = Dispatcher(
             self.name, view.routing, self._on_expert_failure, stats=self._trace
         )
+        self._announce_leader()
         self.model = load_central(self.model_config, MODEL_FILE, self.dispatcher)
         self.tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
-        self.role = NodeRole.LEADER
         self.ready = True
         logger.info(
             "%s: dense model loaded; I am leader (holding %d experts)",
             self.name,
             len(self.expert_group.experts),
         )
-        self._announce_leader()
 
     def _load_experts(self) -> None:
         view = self.engine.view
@@ -665,7 +667,7 @@ class Node:
         view = self.engine.view
         if should_become_leader(view, self.name):
             logger.info("%s: I win the election; promoting to leader", self.name)
-            self.role = NodeRole.LEADER
+            self.ready = False  # not ready to generate until the dense model is loaded
             self._become_leader()
         elif node_id != self.name and self.role == NodeRole.LEADER:
             self._on_expert_failure(node_id)
