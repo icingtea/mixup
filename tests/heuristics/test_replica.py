@@ -14,7 +14,7 @@ def _table(blocks: dict[str, tuple[int, int]]) -> RoutingTable:
 
 def test_plan_backups_assigns_different_node() -> None:
     table = plan_backups(_table({"a": (0, 3), "b": (4, 7)}), {"a", "b"})
-    for expert, entry in table.assignment.items():
+    for _expert, entry in table.assignment.items():
         assert entry.backup is not None
         assert entry.backup != entry.node_id
 
