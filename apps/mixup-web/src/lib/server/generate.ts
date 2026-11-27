@@ -34,6 +34,18 @@ async function fetchExpertCounts(url: string): Promise<number[]> {
 	}
 }
 
+async function fetchRouting(
+	url: string
+): Promise<GenerateResult['routing']> {
+	try {
+		const res = await fetch(`${url}/routing`, { signal: AbortSignal.timeout(2000) });
+		if (!res.ok) return undefined;
+		return (await res.json()) as GenerateResult['routing'];
+	} catch {
+		return undefined;
+	}
+}
+
 export async function generate(prompt: string, maxNewTokens: number): Promise<GenerateResult> {
 	const urls = nodeUrls(loadStartup());
 	for (let attempt = 0; attempt < 30; attempt++) {
@@ -62,6 +74,7 @@ export async function generate(prompt: string, maxNewTokens: number): Promise<Ge
 			const result = (await res.json()) as GenerateResult;
 			const after = await fetchExpertCounts(url);
 			result.expert_counts = after.map((v, i) => v - (before[i] ?? 0));
+			result.routing = await fetchRouting(url);
 			return result;
 		} catch {
 			await sleep(2000); // wait for failover, then re-discover

@@ -3,6 +3,7 @@
 	import type { ClusterSnapshot, GenerateResult } from '$lib/types';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import ChatTab from '$lib/components/ChatTab.svelte';
+	import ExpertPanel from '$lib/components/ExpertPanel.svelte';
 	import NodesTab from '$lib/components/NodesTab.svelte';
 	import ResourcesTab from '$lib/components/MetricsTab.svelte';
 	import ExpertsTab from '$lib/components/ExpertsTab.svelte';
@@ -92,7 +93,10 @@
 
 			<div class="content scroll">
 				{#if active === 'chat'}
-					<ChatTab onSend={send} />
+					<div class="chat-layout">
+						<ChatTab onSend={send} />
+						<ExpertPanel {snapshot} />
+					</div>
 				{:else if active === 'nodes'}
 					<NodesTab nodes={snapshot?.nodes ?? []} leader={snapshot?.leader ?? null} />
 				{:else if active === 'resources'}
@@ -176,5 +180,17 @@
 	.content {
 		flex: 1;
 		padding: 14px;
+	}
+
+	.chat-layout {
+		display: flex;
+		height: 100%;
+		gap: 14px;
+		min-height: 0;
+	}
+
+	.chat-layout :global(.chat) {
+		flex: 1;
+		min-width: 0;
 	}
 </style>

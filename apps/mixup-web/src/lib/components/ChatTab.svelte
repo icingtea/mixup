@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { GenerateResult } from '$lib/types';
+	import type { GenerateResult, RoutingAssignment } from '$lib/types';
 
 	interface ExpertUsage {
 		top: { e: number; c: number }[];
@@ -13,6 +13,7 @@
 		text: string;
 		meta?: string;
 		usage?: ExpertUsage;
+		routing?: Record<string, RoutingAssignment>;
 	}
 
 	interface Props {
@@ -51,7 +52,8 @@
 						role: 'assistant',
 						text: r.text,
 						meta: `${r.tokens} tokens in ${r.elapsed_seconds.toFixed(2)}s (${tokS.toFixed(2)} tok/s)`,
-						usage: computeUsage(r.expert_counts)
+						usage: computeUsage(r.expert_counts),
+						routing: r.routing?.assignment
 					}
 				];
 			} else {
@@ -65,6 +67,10 @@
 		} finally {
 			busy = false;
 		}
+	}
+
+	function nodeOf(routing: Msg['routing'], expert: number): string {
+		return routing?.[expert]?.node ?? '—';
 	}
 </script>
 
@@ -86,6 +92,7 @@
 										<span class="e-fill" style="width:{(t.c / m.usage.max) * 100}%"></span>
 									</span>
 									<span class="e-count">{t.c}</span>
+									<span class="e-node">{nodeOf(m.routing, t.e)}</span>
 								</div>
 							{/each}
 						</div>
@@ -228,5 +235,15 @@
 		width: 28px;
 		text-align: right;
 		color: var(--text);
+	}
+
+	.e-node {
+		width: 92px;
+		text-align: right;
+		color: var(--muted);
+		font-size: 11px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 </style>

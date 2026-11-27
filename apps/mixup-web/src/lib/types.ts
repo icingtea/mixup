@@ -108,6 +108,7 @@ export interface GenerateResult {
 	dense_seconds: number | null;
 	dispatch_seconds: number | null;
 	expert_counts?: number[]; // per-expert activation counts for this message (diff)
+	routing?: { epoch: number | null; assignment: Record<string, RoutingAssignment> }; // snapshot at generation time
 }
 
 export interface LocalBenchResult {
