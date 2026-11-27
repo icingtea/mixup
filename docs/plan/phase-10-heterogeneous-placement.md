@@ -157,8 +157,12 @@ note. No phase merges on "works on my laptop".
 
 ## Known issues (Phase 4)
 
-- **Expert rejoin (restarting a killed node) is flaky.** A restarted node's revival
-  sometimes doesn't stick — the gossip loop re-marks it dead before its own gossip loop
-  starts (which begins only after model load). Failover works; rejoin needs the gossip
-  loop to start before model load, or an explicit revival retry. The fresh time-based
-  incarnation is in place (so a restart is distinguishable) but the timing still races.
+- **Expert rejoin (restarting a killed node) is partially fixed but still flaky.** The
+  revival itself works now (a restarted node's higher incarnation revives it via
+  `_merge_peer`), and a boot grace period + longer timeouts eliminated spurious SUSPECT/
+  DEAD at boot. What remains is a **routing-propagation race**: under a concurrent
+  failover + rejoin, the leader's view, its dispatcher table, and a peer's expert group
+  can diverge (the view advances to a newer epoch that the peer's expert group never
+  applies, so coverage/ownership silently desyncs and generation degrades). Failover
+  (kill → promote backups) is solid; rejoin needs the routing adoption to be made
+  consistent across view + dispatcher + every peer's expert group.
