@@ -72,6 +72,9 @@ class StartupConfig(BaseModel):
     experts: ExpertAlloc
     """The initial expert assignment (the leader holds none)."""
 
+    kv_sync_every: int = 5
+    """How often (in generated tokens) the leader broadcasts its warm KV cache to peers."""
+
     @field_validator("experts")
     @classmethod
     def _experts_unique(cls, value: ExpertAlloc) -> ExpertAlloc:

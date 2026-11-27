@@ -5,6 +5,7 @@ control loop: leaders generate, followers run a watchdog that promotes them on l
 failure (Phases 3/4). The FastAPI app (built in infer.py) reads this state.
 """
 
+import base64
 import contextlib
 import gc
 import logging
@@ -14,9 +15,9 @@ import time
 import requests
 import torch
 from requests.exceptions import RequestException
-from transformers import AutoTokenizer, GraniteMoeConfig, GraniteMoeForCausalLM, LogitsProcessor
+from transformers import AutoTokenizer, GraniteMoeConfig, GraniteMoeForCausalLM
 
-from mixup_core.constants import CHECKPOINT_FILE, MODEL_DIR, MODEL_FILE, address
+from mixup_core.constants import MODEL_DIR, MODEL_FILE, address
 from mixup_core.election import (
     apply_leader_announcement,
     current_leader,
@@ -26,7 +27,7 @@ from mixup_core.election import (
 from mixup_core.env import NodeEnv
 from mixup_core.gossip import Alive, apply_gossip, decode_gossip, encode_gossip
 from mixup_core.gossip_engine import GossipEngine
-from mixup_core.kvledger import Checkpoint, decode_checkpoint, encode_checkpoint
+from mixup_core.kvledger import KvState, decode_kv_state, encode_kv_state
 from mixup_core.runtime import ClusterView, RoutingTable
 from mixup_core.scheduler import (
     LeastLoadedPolicy,
@@ -38,6 +39,7 @@ from mixup_core.types import NodeRole
 
 from .dispatch import Dispatcher
 from .gossip_loop import GossipLoop
+from .kv_cache import cache_from_bytes, cache_to_bytes
 from .metrics import MetricsCollector
 from .model import ExpertGroup, load_central
 
@@ -49,25 +51,6 @@ GOSSIP_INTERVAL = 0.5
 PING_TIMEOUT = 1.0
 SUSPECT_TIMEOUT = 2.0
 INDIRECT_K = 2
-
-
-class _CheckpointProcessor(LogitsProcessor):
-    """Writes the token-sequence checkpoint after each generated token (before sampling)."""
-
-    def __init__(self, prompt_len: int, max_new_tokens: int, path) -> None:
-        self.prompt_len = prompt_len
-        self.max_new_tokens = max_new_tokens
-        self.path = path
-
-    def __call__(self, input_ids, scores):
-        kv_seq = input_ids.shape[1] - self.prompt_len
-        checkpoint = Checkpoint(
-            kv_seq=kv_seq,
-            input_ids=input_ids[0].tolist(),
-            max_new_tokens=self.max_new_tokens,
-        )
-        self.path.write_text(encode_checkpoint(checkpoint).decode())
-        return scores
 
 
 def broadcast_routing(view: ClusterView, by_node: str) -> None:
@@ -128,6 +111,11 @@ class Node:
             send=self._send_gossip,
             on_dead=self._on_member_dead,
         )
+        # The freshest warm KV-cache snapshot this node has received (as a follower), for
+        # resuming an interrupted generation after a failover.
+        self._kv: KvState | None = None
+        self._kv_seq = 0  # global monotonic token count (election freshness + dedup)
+        self.kv_sync_every = env.config.kv_sync_every
 
     # -- control loop ------------------------------------------------------
 
@@ -300,46 +288,77 @@ class Node:
         return self._generate(prompt, max_new_tokens)
 
     def _generate(
-        self, prompt: str, max_new_tokens: int, resume: bool = False
+        self, prompt: str, max_new_tokens: int
     ) -> tuple[str, int, float, float, float]:
         assert self.model is not None and self.tokenizer is not None
         assert self.dispatcher is not None
         logger.info("request: prompt=%r max_new_tokens=%d", prompt, max_new_tokens)
         self.dispatcher.wait_for_experts()
 
-        if resume and CHECKPOINT_FILE.exists():
-            checkpoint = decode_checkpoint(CHECKPOINT_FILE.read_bytes())
-            ids = torch.tensor([checkpoint.input_ids])
-            prompt_len = len(checkpoint.input_ids) - checkpoint.kv_seq
-            target = checkpoint.max_new_tokens
-            remaining = max(0, target - checkpoint.kv_seq)
+        device = self.model.device
+        prompt_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(device)
+        prompt_len = prompt_ids.shape[1]
+        prompt_list = prompt_ids[0].tolist()
+
+        # Resume from a warm cache if this request continues the generation we were
+        # snapshotting (the gateway re-issues the same prompt after a failover).
+        state = self._kv
+        warm = (
+            state is not None
+            and len(state.input_ids) > prompt_len
+            and state.input_ids[:prompt_len] == prompt_list
+            and state.max_new_tokens == max_new_tokens
+        )
+
+        if warm:
+            past = cache_from_bytes(base64.b64decode(state.cache_b64), device)
+            nxt = torch.tensor([[state.next_token]], device=device)
+            generated_ids: list[int] = state.input_ids[prompt_len:]
+            remaining = max(0, max_new_tokens - len(generated_ids))
             logger.info(
-                "resuming from checkpoint: kv_seq=%d, %d tokens left",
-                checkpoint.kv_seq,
+                "resuming warm cache: %d tokens already generated, %d left",
+                len(generated_ids),
                 remaining,
             )
         else:
-            ids = self.tokenizer(prompt, return_tensors="pt").input_ids
-            prompt_len = ids.shape[1]
-            target = max_new_tokens
+            past = None
+            nxt = None
+            generated_ids = []
             remaining = max_new_tokens
 
         if remaining <= 0:
             logger.info("generation already complete")
             return "", 0, 0.0, 0.0, 0.0
 
-        metrics = MetricsCollector(self.name, prompt, target)
+        metrics = MetricsCollector(self.name, prompt, max_new_tokens)
         self.dispatcher.metrics = metrics
 
-        CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        processor = _CheckpointProcessor(prompt_len, target, CHECKPOINT_FILE)
+        eos = self.tokenizer.eos_token_id
         start = time.perf_counter()
         with torch.no_grad():
-            out = self.model.generate(
-                ids, max_new_tokens=remaining, do_sample=False, logits_processor=[processor]
-            )
+            if past is None:
+                out = self.model(input_ids=prompt_ids, cache=None, use_cache=True)
+                past = out.cache
+                nxt = out.logits[:, -1, :].argmax(dim=-1)
+            for _ in range(remaining):
+                if nxt.item() == eos:
+                    break
+                if len(generated_ids) % self.kv_sync_every == 0:
+                    self._broadcast_kv(
+                        past,
+                        nxt.item(),
+                        prompt_list + generated_ids,
+                        max_new_tokens,
+                    )
+                generated_ids.append(nxt.item())
+                self._kv_seq += 1
+                self._bump_kv_seq(self._kv_seq)
+                out = self.model(input_ids=nxt.unsqueeze(0), cache=past, use_cache=True)
+                past = out.cache
+                nxt = out.logits[:, -1, :].argmax(dim=-1)
+
         elapsed = time.perf_counter() - start
-        generated = out.shape[1] - ids.shape[1]
+        generated = len(generated_ids)
         throughput = generated / elapsed if elapsed > 0 else 0.0
         dense = max(0.0, elapsed - metrics.dispatch_seconds)
         dispatch = metrics.dispatch_seconds
@@ -357,11 +376,65 @@ class Node:
             dispatch,
             throughput,
         )
-        text = self.tokenizer.decode(out[0][prompt_len:])
-        if torch.isnan(out).any() or torch.isinf(out).any():
-            logger.error("generation output contains NaN/inf — model state corrupted")
+        text = self.tokenizer.decode(generated_ids)
         logger.info("generated: %s", text)
         return text, generated, elapsed, dense, dispatch
+
+    # -- warm KV-cache sharing --------------------------------------------
+
+    def _broadcast_kv(
+        self,
+        past,
+        next_token: int,
+        input_ids: list[int],
+        max_new_tokens: int,
+    ) -> None:
+        """Snapshot the KV cache and push it to peers so a successor can resume warm.
+
+        The cache is serialized synchronously (capturing the exact bytes at this point,
+        before the loop mutates ``past`` again); the network push happens on a background
+        thread so it never stalls generation.
+        """
+        try:
+            cache_b64 = base64.b64encode(cache_to_bytes(past)).decode()
+        except Exception:  # noqa: BLE001 - a serialization hiccup must not break generation
+            logger.exception("kv: failed to serialize cache; skipping broadcast")
+            return
+        state = KvState(
+            kv_seq=self._kv_seq,
+            next_token=next_token,
+            input_ids=input_ids,
+            max_new_tokens=max_new_tokens,
+            cache_b64=cache_b64,
+        )
+        threading.Thread(
+            target=self._send_kv, args=(encode_kv_state(state),), daemon=True
+        ).start()
+
+    def _send_kv(self, payload: bytes) -> None:
+        for name in self.engine.view.members:
+            if name == self.name:
+                continue
+            with contextlib.suppress(RequestException):
+                requests.post(f"{address(name)}/kv", data=payload, timeout=5)
+
+    def store_kv(self, body: bytes) -> None:
+        """Store a warm KV-cache snapshot from the leader (freshest wins)."""
+        state = decode_kv_state(body)
+        if self._kv is None or state.kv_seq >= self._kv.kv_seq:
+            self._kv = state
+
+    def _bump_kv_seq(self, kv_seq: int) -> None:
+        """Record our global token count in the view so gossip carries it for elections."""
+        self.engine.mutate(
+            lambda v: ClusterView(
+                members={
+                    **v.members,
+                    self.name: v.members[self.name].model_copy(update={"kv_seq": kv_seq}),
+                },
+                routing=v.routing,
+            )
+        )
 
     # -- gossip transport + failure reaction -------------------------------
 

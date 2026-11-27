@@ -52,6 +52,11 @@ def build_app(node: Node) -> FastAPI:
         node.handle_gossip(await request.json())
         return {"ok": True}
 
+    @app.post("/kv")
+    async def kv(request: Request) -> dict:
+        node.store_kv(await request.body())
+        return {"ok": True}
+
     @app.post("/leader")
     async def leader_announce(request: Request) -> dict:
         data = await request.json()

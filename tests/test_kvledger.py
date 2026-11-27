@@ -2,11 +2,14 @@
 
 from mixup_core.kvledger import (
     Checkpoint,
+    KvState,
     LedgerHeader,
     decode_checkpoint,
     decode_header,
+    decode_kv_state,
     encode_checkpoint,
     encode_header,
+    encode_kv_state,
 )
 
 
@@ -26,3 +29,14 @@ def test_header_roundtrip() -> None:
 def test_checkpoint_roundtrip() -> None:
     checkpoint = Checkpoint(kv_seq=7, input_ids=[1, 2, 3, 4], max_new_tokens=50)
     assert decode_checkpoint(encode_checkpoint(checkpoint)) == checkpoint
+
+
+def test_kv_state_roundtrip() -> None:
+    state = KvState(
+        kv_seq=12,
+        next_token=203,
+        input_ids=[1, 2, 3, 203, 44],
+        max_new_tokens=50,
+        cache_b64="aGVsbG8=",
+    )
+    assert decode_kv_state(encode_kv_state(state)) == state

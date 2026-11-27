@@ -63,3 +63,29 @@ def encode_checkpoint(checkpoint: Checkpoint) -> bytes:
 def decode_checkpoint(body: bytes) -> Checkpoint:
     """Deserialize a checkpoint from JSON bytes."""
     return Checkpoint.model_validate_json(body)
+
+
+class KvState(BaseModel):
+    """A warm KV-cache snapshot the leader broadcasts so followers can resume it.
+
+    ``cache_b64`` is the base64 of the safetensors-serialized ``DynamicCache``; the other
+    fields are the metadata a successor needs to continue: how many tokens were generated
+    (``kv_seq``), the next token id already computed (``next_token``), the full token
+    sequence so far (``input_ids`` = prompt + generated), and the generation target.
+    """
+
+    kv_seq: int
+    next_token: int
+    input_ids: list[int]
+    max_new_tokens: int
+    cache_b64: str
+
+
+def encode_kv_state(state: KvState) -> bytes:
+    """Serialize a KvState to JSON bytes."""
+    return state.model_dump_json().encode()
+
+
+def decode_kv_state(body: bytes) -> KvState:
+    """Deserialize a KvState from JSON bytes."""
+    return KvState.model_validate_json(body)
