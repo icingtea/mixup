@@ -6,6 +6,7 @@ whole loop is unit-testable with synthetic time; ``run()`` is the thin backgroun
 that calls ``tick`` on a real clock.
 """
 
+import logging
 import time
 from collections.abc import Callable
 
@@ -13,6 +14,8 @@ from mixup_core.failure_detection import Action
 from mixup_core.gossip import PingReq, encode_gossip
 from mixup_core.gossip_engine import GossipEngine
 from mixup_core.types import MemberStatus, NodeId
+
+logger = logging.getLogger(__name__)
 
 Send = Callable[[NodeId | None, dict], None]
 ChoosePeer = Callable[[frozenset[NodeId]], NodeId | None]
@@ -69,6 +72,8 @@ class GossipLoop:
                 ping = self.engine.probe(peer, now)
                 self._pending[peer] = now + self.ping_timeout
                 self._send(peer, encode_gossip(ping))
+            else:
+                logger.info("gossip: no peer to ping (pending=%s)", sorted(self._pending))
 
     def _process_timeouts(self, now: float) -> None:
         for peer in [p for p, t in self._pending.items() if now >= t]:
@@ -80,10 +85,12 @@ class GossipLoop:
                 if msg is not None:
                     self._send(None, encode_gossip(msg))
                 self._pending[peer] = now + self.suspect_timeout
+                logger.info("gossip: %s is suspect", peer)
             elif action is Action.DEAD:
                 if msg is not None:
                     self._send(None, encode_gossip(msg))
                 del self._pending[peer]
+                logger.info("gossip: %s is dead", peer)
                 if self._on_dead is not None:
                     self._on_dead(peer)
             else:  # WAIT (should not normally occur with correct scheduling)
@@ -103,6 +110,7 @@ class GossipLoop:
 
     def run(self, interval: float) -> None:
         """Block forever, ticking on the real clock every ``interval`` seconds."""
+        logger.info("gossip loop started (interval=%.2fs)", interval)
         while True:
             self.tick(self._clock())
             time.sleep(interval)

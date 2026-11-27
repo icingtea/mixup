@@ -425,6 +425,7 @@ class Node:
         state = decode_kv_state(body)
         if self._kv is None or state.kv_seq >= self._kv.kv_seq:
             self._kv = state
+            logger.info("kv: stored warm snapshot (kv_seq=%d)", state.kv_seq)
 
     def _bump_kv_seq(self, kv_seq: int) -> None:
         """Record our global token count in the view so gossip carries it for elections."""
@@ -499,3 +500,11 @@ class Node:
             self._become_leader()
         elif node_id != self.name and self.role is NodeRole.LEADER:
             self._on_expert_failure(node_id)
+        else:
+            logger.info(
+                "%s: %s is dead; no action (leader=%s role=%s)",
+                self.name,
+                node_id,
+                current_leader(view),
+                self.role.value,
+            )

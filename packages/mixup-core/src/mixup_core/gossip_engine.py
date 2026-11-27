@@ -144,7 +144,11 @@ class GossipEngine:
 
             if isinstance(msg, PingReq):
                 self._relays.setdefault(msg.target, []).append(msg.from_node)
-                self.detector.ping(msg.target, now)
+                # Just forward a probe to the target on the requester's behalf. Do NOT
+                # touch self.detector for the target: that would reset our own SUSPECT
+                # state (we may already be failing to reach it ourselves), and every node
+                # pinging each other with PingReq would keep the SUSPECT->DEAD transition
+                # from ever firing.
                 return [(msg.target, self._self_ping())]
 
             if isinstance(msg, (Suspect, Dead, Alive)):
