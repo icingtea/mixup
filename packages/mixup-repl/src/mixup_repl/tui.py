@@ -34,16 +34,6 @@ POLL = 1.0
 SPARK = 120  # samples kept per sparkline
 
 
-class Sidebar(Static):
-    """One node's status card (status, role, experts, kill/restart buttons)."""
-
-    def __init__(self, name: str, url: str) -> None:
-        super().__init__(id=f"node-{name}")
-        self.name = name
-        self.url = url
-        self.selected = False
-
-
 class MixupApp(App):
     """The mixup TUI."""
 
@@ -128,8 +118,8 @@ class MixupApp(App):
 
     def _build_sidebar(self) -> None:
         sidebar = self.query_one("#sidebar", VerticalScroll)
-        for name, url in self.urls.items():
-            sidebar.mount(Sidebar(name, url))
+        for name in self.urls:
+            sidebar.mount(Static(id=f"node-{name}"))
             sidebar.mount(Button("kill", id=f"kill-{name}", classes="kill"))
             sidebar.mount(Button("start", id=f"start-{name}", classes="start"))
 
