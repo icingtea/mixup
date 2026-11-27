@@ -89,8 +89,17 @@ class CommitTracker:
         return record
 
     def record_ack(self, index: int, node_id: str) -> int:
-        """Record an ack from ``node_id``; return the new committed watermark."""
+        """Record an ack from ``node_id`` for ``index``; return the new watermark."""
         self._acks.setdefault(index, set()).add(node_id)
+        return self._advance()
+
+    def record_acks_through(self, index: int, node_id: str) -> int:
+        """Record acks for indices 1..``index`` (a follower stored the whole log)."""
+        for i in range(1, index + 1):
+            self._acks.setdefault(i, set()).add(node_id)
+        return self._advance()
+
+    def _advance(self) -> int:
         while (
             self.log.committed + 1
         ) in self._acks and len(self._acks[self.log.committed + 1]) >= self.quorum:

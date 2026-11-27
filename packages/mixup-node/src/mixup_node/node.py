@@ -35,7 +35,7 @@ from mixup_core.scheduler import (
     balance_experts,
 )
 from mixup_core.stats import TraceBuffer
-from mixup_core.tokenlog import CommitTracker
+from mixup_core.tokenlog import CommitLog, CommitRecord, CommitTracker
 from mixup_core.types import MemberStatus, NodeRole
 
 from .dispatch import Dispatcher
@@ -137,6 +137,7 @@ class Node:
         self.kv_sync_every = env.config.kv_sync_every
         self._peer_idx = 0  # round-robin cursor for gossip peer selection
         self._trace: TraceBuffer | None = None  # leader's activation stats (Phase 2)
+        self._commit_log = CommitLog()  # replicated commit log (Phase 5)
         self._commit: CommitTracker | None = None  # leader's commit quorum (Phase 5)
         self._next_replan_at = REPLAN_MIN_TOKENS  # token count for the next re-plan
         self.monitor = ResourceMonitor()  # live CPU/memory/GPU sampling
@@ -214,7 +215,7 @@ class Node:
         view = self.engine.mutate(lambda v: promote(v, self.name))
         assert view.routing is not None
         self.role = NodeRole.LEADER
-        self._commit = CommitTracker(len(view.members))
+        self._commit = CommitTracker(len(view.members), log=self._commit_log)
         if self.expert_group is None:
             self.expert_group = self._make_expert_group(view.routing)
         self._trace = TraceBuffer(
@@ -506,6 +507,13 @@ class Node:
                 generated_ids.append(nxt.item())
                 self._kv_seq += 1
                 self._bump_kv_seq(self._kv_seq)
+                if self._commit is not None:
+                    # Append to the commit log and ack our own copy (the leader is one of
+                    # the quorum). Followers ack via /commit; the watermark advances on a
+                    # majority, and resume truncates to it.
+                    epoch = self.engine.view.members[self.name].epoch
+                    self._commit.append(epoch, nxt.item(), self._kv_seq)
+                    self._commit.record_ack(self._commit.log.next_index - 1, self.name)
                 out = self.model(input_ids=nxt.unsqueeze(0), cache=past, use_cache=True)
                 past = out.cache
                 nxt = out.logits[:, -1, :].argmax(dim=-1)
@@ -531,6 +539,16 @@ class Node:
         )
         text = self.tokenizer.decode(generated_ids)
         logger.info("generated: %s", text)
+
+        # Phase 5: replicate the commit log to followers and advance the committed
+        # watermark on majority-ack before returning (commit-before-emit).
+        committed = self._replicate_commit(
+            past, nxt.item(), prompt_list + generated_ids, max_new_tokens
+        )
+        if committed < generated:
+            logger.warning(
+                "commit quorum: only %d/%d tokens committed", committed, generated
+            )
 
         # Phase 2/4 coarse loop: re-place experts periodically as activation stats drift.
         # The placement objective amortizes churn, so re-planning only moves experts when
@@ -592,6 +610,58 @@ class Node:
             logger.info(
                 "kv: stored warm snapshot (epoch=%d kv_seq=%d)", state.epoch, state.kv_seq
             )
+
+    def store_commit(self, body: dict) -> int:
+        """Store replicated commit records + the aligned KV snapshot (follower).
+
+        Returns the highest record index stored (the leader counts this as an ack through
+        that index). The KV snapshot is stored via the same freshest-wins rule as
+        ``store_kv``, so it lands at the committed watermark.
+        """
+        records = [CommitRecord(**r) for r in body.get("records", [])]
+        last = 0
+        for record in records:
+            highest = self._commit_log.records[-1].index if self._commit_log.records else 0
+            if record.index > highest:
+                self._commit_log.append(record)
+            last = max(last, record.index)
+        if body.get("kv"):
+            state = decode_kv_state(body["kv"].encode())
+            if self._kv is None or (state.epoch, state.kv_seq) >= (self._kv.epoch, self._kv.kv_seq):
+                self._kv = state
+        return last
+
+    def _replicate_commit(self, past, next_token, input_ids, max_new_tokens) -> int:
+        """Replicate the commit log + the aligned KV snapshot to followers; return the
+        committed watermark (majority-ack of the whole log)."""
+        if self._commit is None or not self._commit.log.records:
+            return 0
+        last = self._commit.log.records[-1].index
+        cache_b64 = base64.b64encode(cache_to_bytes(past)).decode()
+        kv = KvState(
+            kv_seq=self._kv_seq,
+            next_token=next_token,
+            input_ids=input_ids,
+            max_new_tokens=max_new_tokens,
+            cache_b64=cache_b64,
+            epoch=self.engine.view.members[self.name].epoch,
+        )
+        payload = {
+            "records": [r.model_dump() for r in self._commit.log.records],
+            "last_index": last,
+            "kv": encode_kv_state(kv).decode(),
+        }
+        for name in self.engine.view.members:
+            if name == self.name:
+                continue
+            try:
+                resp = requests.post(f"{address(name)}/commit", json=payload, timeout=5)
+                acked = resp.json().get("acked", 0)
+                if acked > 0:
+                    self._commit.record_acks_through(acked, name)
+            except (RequestException, ValueError):
+                pass
+        return self._commit.log.committed
 
     def _bump_kv_seq(self, kv_seq: int) -> None:
         """Record our global token count in the view so gossip carries it for elections."""

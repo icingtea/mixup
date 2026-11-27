@@ -58,6 +58,12 @@ def build_app(node: Node) -> FastAPI:
         node.store_kv(await request.body())
         return {"ok": True}
 
+    @app.post("/commit")
+    async def commit(request: Request) -> dict:
+        data = await request.json()
+        acked = node.store_commit(data)
+        return {"ok": True, "acked": acked}
+
     @app.post("/leader")
     async def leader_announce(request: Request) -> dict:
         data = await request.json()
