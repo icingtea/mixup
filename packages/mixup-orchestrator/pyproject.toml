@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 mixup-fetch-model = "mixup_orchestrator.fetch:main"
 mixup-orchestrator = "mixup_orchestrator.distribute:main"
+mixup-lab = "mixup_orchestrator.lab:main"
 
 [tool.uv.sources]
 mixup-core = { workspace = true }

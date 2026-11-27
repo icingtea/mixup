@@ -7,7 +7,6 @@ failure (Phases 3/4). The FastAPI app (built in infer.py) reads this state.
 
 import base64
 import contextlib
-import gc
 import logging
 import threading
 import time
@@ -21,7 +20,6 @@ from mixup_core.constants import MODEL_DIR, MODEL_FILE, address
 from mixup_core.election import (
     apply_leader_announcement,
     current_leader,
-    promote,
     should_become_leader,
 )
 from mixup_core.env import NodeEnv
@@ -33,7 +31,6 @@ from mixup_core.scheduler import (
     LeastLoadedPolicy,
     balance_experts,
     handle_node_failure,
-    rebalance_experts,
 )
 from mixup_core.types import MemberStatus, NodeRole
 
@@ -181,34 +178,27 @@ class Node:
     # -- role transitions --------------------------------------------------
 
     def _become_leader(self) -> None:
-        """Shed our experts (if any), load the dense model, and become the leader."""
-        if self.expert_group is not None:
+        """Load the dense model and (if we own experts) keep/load our experts, then lead.
 
-            def _promote(v: ClusterView) -> ClusterView:
-                v = promote(v, self.name)
-                if v.routing is not None:
-                    new_table = rebalance_experts(v, v.routing, LeastLoadedPolicy())
-                    v = ClusterView(members=v.members, routing=new_table)
-                return v
-
-            shed_view = self.engine.mutate(_promote)
-            broadcast_routing(shed_view, self.name)
-            self.expert_group = None
-            # Free the shed experts' GPU memory before loading the dense model, otherwise
-            # the promotion can OOM (CUBLAS_STATUS_ALLOC_FAILED) on a shared GPU.
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            logger.info("%s: shed experts, becoming leader", self.name)
-
+        Leader-as-owner (Phase 1): instead of shedding our experts on promotion, we keep
+        them and serve them alongside the dense model. The expert TCP server already
+        dispatches to ``self.expert_group``, and the dispatcher routes to ``self.name`` over
+        loopback, so no special local path is needed.
+        """
         view = self.engine.view
         assert view.routing is not None
+        if self.expert_group is None:
+            self.expert_group = ExpertGroup(self.name, self.model_config, MODEL_FILE, view.routing)
         self.dispatcher = Dispatcher(self.name, view.routing, self._on_expert_failure)
         self.model = load_central(self.model_config, MODEL_FILE, self.dispatcher)
         self.tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
         self.role = NodeRole.LEADER
         self.ready = True
-        logger.info("%s: dense model loaded; I am leader", self.name)
+        logger.info(
+            "%s: dense model loaded; I am leader (holding %d experts)",
+            self.name,
+            len(self.expert_group.experts),
+        )
         self._announce_leader()
 
     def _load_experts(self) -> None:
