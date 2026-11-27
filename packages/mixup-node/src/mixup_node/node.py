@@ -944,10 +944,10 @@ class Node:
         if should_become_leader(view, self.name):
             logger.info("%s: I win the election; promoting to leader", self.name)
             self.ready = False  # not ready to generate until the dense model is loaded
-            # Re-home the dead leader's experts *before* promoting, so the dispatcher's
-            # routing table doesn't still point at the dead node — otherwise the first
-            # generation's wait_for_experts stalls polling a dead peer.
-            self.engine.mutate(lambda v: failover_with_backups(v, node_id, by_node=self.name))
+            # Re-home the dead leader's experts *before* promoting (and broadcast the new
+            # routing so surviving experts adopt it), otherwise the first generation's
+            # dispatcher points at the dead node and the survivors skip the re-homed experts.
+            self._on_expert_failure(node_id)
             self._become_leader()
         elif node_id != self.name and self.role == NodeRole.LEADER:
             self._on_expert_failure(node_id)
