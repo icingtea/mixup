@@ -28,7 +28,7 @@ from mixup_core.gossip_engine import GossipEngine
 from mixup_core.kvledger import KvState, decode_kv_state, encode_kv_state
 from mixup_core.planner import plan_routing
 from mixup_core.replica import failover_with_backups, plan_backups
-from mixup_core.runtime import ClusterView, RoutingTable
+from mixup_core.runtime import ClusterView, RoutingTable, apply_routing
 from mixup_core.scheduler import (
     LeastLoadedPolicy,
     balance_experts,
@@ -305,9 +305,16 @@ class Node:
                 _assignment_summary(new_table),
             )
             return None
-        new_view = self.engine.mutate(
-            lambda v: ClusterView(members=v.members, routing=new_table)
-        )
+        # Adopt atomically under the engine lock, but only if it is still newer than the
+        # view (a concurrent failover/rejoin may have already advanced the epoch).
+        new_view = self.engine.mutate(lambda v: apply_routing(v, new_table))
+        if new_view.routing is None or new_view.routing.epoch != new_table.epoch:
+            logger.info(
+                "%s: replan result stale (view now epoch %s), skipped",
+                self.name,
+                new_view.routing.epoch if new_view.routing else None,
+            )
+            return None
         if self.dispatcher is not None:
             self.dispatcher.set_table(new_table)
         if self.expert_group is not None:
