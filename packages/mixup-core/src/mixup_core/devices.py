@@ -23,6 +23,19 @@ class ExecutionType(StrEnum):
     CPU = "cpu"
 
 
+class GpuMode(StrEnum):
+    """How a node's container attaches to the GPU (or not).
+
+    - ``cdi``: NVIDIA Container Device Interface (Linux + nvidia-container-toolkit).
+    - ``nvidia``: the classic ``--gpus all`` runtime (Docker Desktop on Windows/macOS).
+    - ``none``: no GPU (``CUDA_VISIBLE_DEVICES=""``).
+    """
+
+    NONE = "none"
+    CDI = "cdi"
+    NVIDIA = "nvidia"
+
+
 class ProfileMode(StrEnum):
     """How placement decisions treat the (static) profile vs (dynamic) measurements.
 

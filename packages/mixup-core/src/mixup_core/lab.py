@@ -11,12 +11,12 @@ from typing import Annotated
 from pydantic import Field
 
 from .base import StrictModel
-from .devices import DeviceProfile, ExecutionType, ProfileMode
+from .devices import DeviceProfile, ExecutionType, GpuMode, ProfileMode
 from .types import ContainerName, StartupConfig
 
 
 class LabNodeSpec(StrictModel):
-    """How to emulate one node in the lab."""
+    """How to run one node (emulated on this host, or deployed to a device)."""
 
     execution: Annotated[ExecutionType, Field(strict=False)] = ExecutionType.GPU
     cpus: float | None = None
@@ -25,14 +25,31 @@ class LabNodeSpec(StrictModel):
     memory_mb: int | None = None
     """Memory limit (Docker ``--memory``); ``None`` = unrestricted."""
 
+    docker_host: str = "local"
+    """Where this node's container runs. ``"local"`` = this machine's Docker daemon;
+    otherwise a remote daemon reachable via ``ssh://user@host`` or ``tcp://host:port``."""
+
+    gpu_mode: Annotated[GpuMode, Field(strict=False)] | None = None
+    """How to attach the GPU (``cdi`` / ``nvidia`` / ``none``). ``None`` = auto: ``cdi``
+    for GPU nodes, ``none`` for CPU nodes."""
+
+    bind_ip: str | None = None
+    """Host IP to bind the published ports to. ``None`` = auto (the node's endpoint IP
+    when it is a literal, else all interfaces)."""
+
 
 class LabConfig(StrictModel):
-    """A lab cluster: startup layout + profiles + emulation specs."""
+    """A cluster: startup layout + profiles + per-node run specs."""
 
     startup: StartupConfig
     profiles: dict[ContainerName, DeviceProfile] = {}
     specs: dict[ContainerName, LabNodeSpec] = {}
     profile_mode: Annotated[ProfileMode, Field(strict=False)] = ProfileMode.HYBRID
+    image: str = "mixup:latest"
+    """Container image to run (a registry ref for cross-host deployments)."""
+
+    cluster_name: str = "mixup"
+    """Label/volume prefix so multiple clusters can coexist on one daemon."""
 
     def spec_for(self, node: ContainerName) -> LabNodeSpec:
         return self.specs.get(node, LabNodeSpec())
