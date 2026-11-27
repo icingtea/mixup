@@ -54,13 +54,22 @@ transport (`gossip_http.py`), and `scripts/*` (smoke tests + offline predictor t
 
 ## Remaining
 
-1. **Boot-settling quirk** — the first generation after a fresh `mixup-lab` can be
-   short/odd while the cluster rebalances; subsequent generations are clean.
-2. **Distributed BF16 non-determinism** — the same prompt can give different (each coherent)
-   outputs across runs because the distributed reduce rounds differently after a re-plan.
-3. **Phase 7 deployment** (needs the physical 3070/3060/2×Pi testbed): multi-host
+1. **Boot-settling quirk** — the first generation after a fresh `mixup-lab` (or right after a
+   failover) can be short/rambly while the cluster settles its routing; subsequent
+   generations are clean. Last correctness/quality gap; self-healing.
+2. **Phase 7 deployment** (needs the physical 3070/3060/2×Pi testbed): multi-host
    Docker-over-SSH, CUDA/ARM image variants, model sync, real-device calibration, rerun the
    validation matrix. Tooling can be written here; final validation needs the hardware.
+
+## Optional / deferred (paper heuristics not yet wired)
+
+- **Error correction / expert substitution** (CoMoE §5.5): currently a blocking-load
+  fallback (a prefetch miss just loads the correct expert); the "substitute a similar
+  resident expert" pass is not implemented.
+- **Standby main weights** (CoMoE §6.6): every node has the full model on disk, but a
+  standby *loaded* copy is deferred to Phase 7.
+- **KV sync every token**: `kv_sync_every=5` loses ≤4 generated tokens on a mid-generation
+  kill (the resume regenerates them); `kv_sync_every=1` would make it lossless.
 
 ## How to run / test
 
