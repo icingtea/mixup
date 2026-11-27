@@ -11,6 +11,7 @@ This is the node-side half of the offloading layer. The pure ``Residency`` core 
 The wire is bf16; CPU nodes compute in fp32 and cast back (see ``model._expert_dtype``).
 """
 
+import threading
 from pathlib import Path
 
 import torch
@@ -176,3 +177,19 @@ class TieredExpertStore:
 
     def resident_experts(self) -> int:
         return len(self._weights)
+
+    def prefetch(self, layer: int, experts: list[int]) -> None:
+        """Prefetch ``experts`` for ``layer`` in the background (Phase 6).
+
+        Loads the hinted experts so a future request for this layer hits memory instead of
+        disk. Best-effort: only owned experts are loaded; the budget eviction still applies.
+        """
+        if not experts:
+            return
+
+        def _load() -> None:
+            for expert in experts:
+                if expert in self.owned:
+                    self.ensure(layer, expert)
+
+        threading.Thread(target=_load, daemon=True).start()

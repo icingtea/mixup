@@ -4,6 +4,7 @@ Tensors are carried as safetensors bytes; the request and response are pydantic
 models so their shapes are explicit and validated at both ends.
 """
 
+import torch
 from pydantic import BaseModel, ConfigDict
 from safetensors.torch import load, save
 from torch import Tensor
@@ -17,21 +18,27 @@ class ExpertRequest(BaseModel):
     hidden_states: Tensor   # [tokens, hidden] bfloat16
     top_k_index: Tensor     # [tokens, top_k] int64
     top_k_weights: Tensor   # [tokens, top_k] bfloat16
+    prefetch: Tensor        # [k] int64 — predicted next-layer experts (hint), may be empty
 
     def to_bytes(self) -> bytes:
         """Serialize to the safetensors bytes sent over HTTP (moves to CPU)."""
+        prefetch = self.prefetch.contiguous().cpu().to(torch.int64)
         return save(
             {
                 "hidden_states": self.hidden_states.contiguous().cpu(),
                 "top_k_index": self.top_k_index.contiguous().cpu(),
                 "top_k_weights": self.top_k_weights.contiguous().cpu(),
+                "prefetch": prefetch,
             }
         )
 
     @classmethod
     def from_bytes(cls, body: bytes) -> "ExpertRequest":
         """Deserialize from the safetensors bytes received over HTTP."""
-        return cls(**load(body))
+        d = load(body)
+        if "prefetch" not in d:
+            d["prefetch"] = torch.tensor([], dtype=torch.int64)
+        return cls(**d)
 
 
 class ExpertResponse(BaseModel):

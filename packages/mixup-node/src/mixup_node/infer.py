@@ -179,6 +179,9 @@ def _expert_callback(node: Node) -> Callable[[bytes], bytes]:
             raise RuntimeError("not an expert node")
         server_start = time.perf_counter()
         req = ExpertRequest.from_bytes(payload[4:])
+        # Prefetch the predicted next-layer experts (Phase 6) while we compute this layer.
+        if req.prefetch.numel() > 0 and isinstance(node.expert_group, TieredExpertStore):
+            node.expert_group.prefetch(layer + 1, req.prefetch.tolist())
         out = node.expert_group.forward(
             layer, req.hidden_states, req.top_k_index, req.top_k_weights
         )

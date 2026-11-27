@@ -114,6 +114,18 @@ class Dispatcher:
     def _chosen(self, top_k_index: Tensor) -> set[str]:
         return {self.table.assignment[e].node_id for e in top_k_index.flatten().tolist()}
 
+    def _prefetch_hint(
+        self, container: str, layer: int, hidden_states: Tensor, top_k_index: Tensor
+    ) -> list[int]:
+        """Predict next-layer experts; return this node's owned ones (top-k)."""
+        from .predictor import features
+
+        x = features(hidden_states[0], top_k_index[0].tolist(), self.num_experts)
+        probs = self.predictor.predict(x)  # [num_experts] probabilities for layer+1
+        owned = [e for e, r in self.table.assignment.items() if r.node_id == container]
+        ranked = sorted(owned, key=lambda e: -probs[e].item())
+        return ranked[: top_k_index.shape[1]]
+
     def set_table(self, table: RoutingTable) -> None:
         """Adopt a new routing table (on failover or rejoin), refreshing the expert set."""
         self.table = table
@@ -193,11 +205,17 @@ class Dispatcher:
         top_k_index: Tensor,
         top_k_weights: Tensor,
     ) -> Tensor:
+        # Prefetch hint (Phase 6): predict next-layer experts, filtered to this node's
+        # owned experts, so it can prefetch layer+1 while computing layer.
+        prefetch: list[int] = []
+        if self.predictor is not None and top_k_index.shape[0] == 1:
+            prefetch = self._prefetch_hint(container, layer, hidden_states, top_k_index)
         serialize_start = time.perf_counter()
         body = ExpertRequest(
             hidden_states=hidden_states,
             top_k_index=top_k_index,
             top_k_weights=top_k_weights,
+            prefetch=torch.tensor(prefetch, dtype=torch.int64),
         ).to_bytes()
         serialize_time = time.perf_counter() - serialize_start
 
