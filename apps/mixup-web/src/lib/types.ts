@@ -34,6 +34,7 @@ export interface ResidencyInfo {
 	free_bytes: number;
 	free_ratio: number;
 	resident_count: number;
+	prefetch_threshold?: number | null;
 	config: {
 		gamma: number;
 		delta: number;

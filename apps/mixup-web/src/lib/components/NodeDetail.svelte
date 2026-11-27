@@ -59,6 +59,10 @@
 			<span class="k">free</span>
 			<span>{fmtBytes(res.free_bytes)} <span class="muted">({fmtPct(res.free_ratio)})</span></span>
 		</div>
+		<div class="kv">
+			<span class="k">θ_pre threshold</span>
+			<span>{res.prefetch_threshold != null ? res.prefetch_threshold.toFixed(4) : '—'}</span>
+		</div>
 		<div class="kv"><span class="k">γ · freq weight</span><span>{res.config.gamma}</span></div>
 		<div class="kv"><span class="k">δ · recency</span><span>{res.config.delta}</span></div>
 		<div class="kv"><span class="k">λ · importance</span><span>{res.config.lambda}</span></div>

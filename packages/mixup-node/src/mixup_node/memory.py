@@ -21,7 +21,7 @@ from torch.nn import functional as F
 from transformers import GraniteMoeConfig
 
 from mixup_core.devices import DeviceProfile
-from mixup_core.residency import Residency
+from mixup_core.residency import Residency, prefetch_threshold
 from mixup_core.tiers import Tier
 
 from .model import _expert_dtype
@@ -50,6 +50,11 @@ class TieredExpertStore:
         self.owned: set[int] = set()
         # (layer, expert) -> {gate_up, down} on the execution tier.
         self._weights: dict[tuple[int, int], dict[str, Tensor]] = {}
+        # (layer, expert) -> predicted next-activation probability (from the leader's
+        # prefetch hint). Drives the eviction score's ``(1 - δ)(1 - p)`` term and the
+        # ``θ_pre`` prefetch threshold (Phase 3 / CoMoE fine-grained residency).
+        self._predicted: dict[tuple[int, int], float] = {}
+        self._last_prefetch_threshold: float | None = None  # for the observability UI
         budget = {self.execution_tier: budget_bytes} if budget_bytes is not None else {}
         self.residency = Residency(
             profile=profile,
@@ -115,9 +120,13 @@ class TieredExpertStore:
             torch.cuda.empty_cache()
 
     def _evict_one(self) -> None:
-        """Evict the lowest-retention resident expert (moving it to disk)."""
-        predicted = {k: 0.0 for k in self._weights}  # placeholder; real predictor in Phase 6
-        order = self.residency.eviction_order(self.execution_tier, predicted)
+        """Evict the lowest-retention resident expert (moving it to disk).
+
+        The eviction order uses the paper's ``S_evict``, which down-weights experts the
+        predictor expects to fire again soon (``(1 - δ)(1 - p)``), then breaks ties on
+        recency and importance.
+        """
+        order = self.residency.eviction_order(self.execution_tier, self._predicted)
         for key in order:
             if key in self._weights:
                 self._drop(key)
@@ -191,6 +200,11 @@ class TieredExpertStore:
             "free_bytes": self.residency.free_bytes(tier),
             "free_ratio": round(self.residency.free_ratio(tier), 4),
             "resident_count": len(self._weights),
+            "prefetch_threshold": (
+                round(self._last_prefetch_threshold, 4)
+                if self._last_prefetch_threshold is not None
+                else None
+            ),
             "config": {
                 "gamma": cfg.gamma,
                 "delta": cfg.delta,
@@ -201,18 +215,46 @@ class TieredExpertStore:
             },
         }
 
-    def prefetch(self, layer: int, experts: list[int]) -> None:
-        """Prefetch ``experts`` for ``layer`` in the background (Phase 6).
+    def prefetch(
+        self,
+        layer: int,
+        experts: list[int],
+        probs: list[float] | None = None,
+        stability: float = 1.0,
+    ) -> None:
+        """Prefetch ``experts`` for ``layer`` in the background (Phase 3 + 6).
 
-        Loads the hinted experts so a future request for this layer hits memory instead of
-        disk. Best-effort: only owned experts are loaded; the budget eviction still applies.
+        Applies the paper's ``θ_pre`` threshold: only experts whose predicted activation
+        probability clears the threshold are prefetched, and the threshold itself lowers as
+        memory frees up or the resource state stabilizes. A miss falls back to the blocking
+        load in ``ensure``, so correctness never depends on the hint.
         """
         if not experts:
             return
+        probs = list(probs) if probs is not None else [1.0] * len(experts)
+
+        # Record the predicted probabilities so eviction can down-weight soon-to-be-used
+        # experts (the ``(1 - δ)(1 - p)`` term) instead of treating every expert as 0.
+        for e, p in zip(experts, probs, strict=False):
+            if e in self.owned:
+                self._predicted[(layer, e)] = float(p)
+
+        cfg = self.residency.config
+        threshold = prefetch_threshold(
+            cfg.theta_base,
+            stability,
+            self.residency.free_ratio(self.execution_tier),
+            cfg.theta_mem,
+        )
+        self._last_prefetch_threshold = threshold
+        to_load = [
+            e for e, p in zip(experts, probs, strict=False) if e in self.owned and p >= threshold
+        ]
+        if not to_load:
+            return
 
         def _load() -> None:
-            for expert in experts:
-                if expert in self.owned:
-                    self.ensure(layer, expert)
+            for expert in to_load:
+                self.ensure(layer, expert)
 
         threading.Thread(target=_load, daemon=True).start()

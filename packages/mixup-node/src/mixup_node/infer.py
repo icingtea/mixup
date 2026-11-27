@@ -191,11 +191,20 @@ def _expert_callback(node: Node) -> Callable[[bytes], bytes]:
             raise RuntimeError("not an expert node")
         server_start = time.perf_counter()
         req = ExpertRequest.from_bytes(payload[4:])
-        # Prefetch the predicted next-layer experts (Phase 6) while we compute this layer.
+        # Prefetch the predicted next-layer experts (Phase 3 + 6) while we compute this
+        # layer: the hint carries each candidate's activation probability, and the store
+        # applies the paper's ``θ_pre`` threshold (driven by resource stability + free
+        # memory) before deciding what to load.
         if req.prefetch.numel() > 0 and isinstance(node.expert_group, TieredExpertStore):
             nxt = layer + 1
             if nxt < node.model_config.num_hidden_layers:
-                node.expert_group.prefetch(nxt, req.prefetch.tolist())
+                stability = node.monitor.snapshot().get("cpu_util_stability", 1.0)
+                probs = (
+                    req.prefetch_probs.tolist()
+                    if req.prefetch_probs.numel() == req.prefetch.numel()
+                    else None
+                )
+                node.expert_group.prefetch(nxt, req.prefetch.tolist(), probs, stability)
         out = node.expert_group.forward(
             layer, req.hidden_states, req.top_k_index, req.top_k_weights
         )

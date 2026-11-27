@@ -118,15 +118,22 @@ class Dispatcher:
 
     def _prefetch_hint(
         self, container: str, layer: int, hidden_states: Tensor, top_k_index: Tensor
-    ) -> list[int]:
-        """Predict next-layer experts; return this node's owned ones (top-k)."""
+    ) -> tuple[list[int], list[float]]:
+        """Predict next-layer experts; return this node's owned ones with their probs.
+
+        Sends ``2 * top_k`` candidates (with their predicted activation probability) so the
+        node can apply ``θ_pre`` — under memory pressure it prefetches only the very top,
+        and with headroom it prefetches the full candidate set.
+        """
         from .predictor import features
 
         x = features(hidden_states[0], top_k_index[0].tolist(), self.num_experts)
         probs = self.predictor.predict(x)  # [num_experts] probabilities for layer+1
         owned = [e for e, r in self.table.assignment.items() if r.node_id == container]
         ranked = sorted(owned, key=lambda e: -probs[e].item())
-        return ranked[: top_k_index.shape[1]]
+        k = 2 * top_k_index.shape[1]
+        ids = ranked[:k]
+        return ids, [probs[e].item() for e in ids]
 
     def set_table(self, table: RoutingTable) -> None:
         """Adopt a new routing table (on failover or rejoin), refreshing the expert set."""
@@ -210,14 +217,18 @@ class Dispatcher:
         # Prefetch hint (Phase 6): predict next-layer experts, filtered to this node's
         # owned experts, so it can prefetch layer+1 while computing layer.
         prefetch: list[int] = []
+        prefetch_probs: list[float] = []
         if self.predictor is not None and top_k_index.shape[0] == 1:
-            prefetch = self._prefetch_hint(container, layer, hidden_states, top_k_index)
+            prefetch, prefetch_probs = self._prefetch_hint(
+                container, layer, hidden_states, top_k_index
+            )
         serialize_start = time.perf_counter()
         body = ExpertRequest(
             hidden_states=hidden_states,
             top_k_index=top_k_index,
             top_k_weights=top_k_weights,
             prefetch=torch.tensor(prefetch, dtype=torch.int64),
+            prefetch_probs=torch.tensor(prefetch_probs, dtype=torch.float32),
         ).to_bytes()
         serialize_time = time.perf_counter() - serialize_start
 
