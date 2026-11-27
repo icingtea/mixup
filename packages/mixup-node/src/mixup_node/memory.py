@@ -24,7 +24,7 @@ from mixup_core.devices import DeviceProfile
 from mixup_core.residency import Residency, prefetch_threshold
 from mixup_core.tiers import Tier
 
-from .model import _expert_dtype
+from .model import _device, _expert_dtype
 
 
 class TieredExpertStore:
@@ -43,7 +43,7 @@ class TieredExpertStore:
         self.model_file = model_file
         self.num_layers = model_config.num_hidden_layers
         self.num_experts = model_config.num_local_experts or 0
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = _device()
         self.dtype = _expert_dtype(self.device)
         self.execution_tier = Tier.GPU if self.device.type == "cuda" else Tier.CPU
 

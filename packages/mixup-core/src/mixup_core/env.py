@@ -7,9 +7,11 @@ of truth for the runtime contract between host and node.
 """
 
 import os
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import Field
 
+from .base import StrictModel
 from .devices import DeviceProfile, ProfileMode
 from .types import ContainerName, StartupConfig
 
@@ -20,7 +22,7 @@ DEFAULT_PROMPT = "What is mixture of experts?"
 DEFAULT_MAX_NEW_TOKENS = 50
 
 
-class NodeEnv(BaseModel):
+class NodeEnv(StrictModel):
     """The complete runtime environment handed to a node container."""
 
     container_name: ContainerName
@@ -38,7 +40,7 @@ class NodeEnv(BaseModel):
     profiles: dict[ContainerName, DeviceProfile] = {}
     """Per-node device profiles (the perception layer for placement)."""
 
-    profile_mode: ProfileMode = ProfileMode.HYBRID
+    profile_mode: Annotated[ProfileMode, Field(strict=False)] = ProfileMode.HYBRID
     """How placement weighs the declared profile vs online measurements."""
 
 

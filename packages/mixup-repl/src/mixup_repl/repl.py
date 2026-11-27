@@ -1,23 +1,17 @@
-"""mixup-repl: prompt the mixup model, locally or on a running cluster.
+"""mixup-repl: prompt the running mixup cluster (CLI benchmark client).
 
-Two modes:
-
-* ``--local``: load the whole model in-process (GPU when available) and answer directly —
-  a plain single-process baseline.
-* default: discover the current leader and generate with failover-aware retry. If the
-  leader dies mid-request (connection drops), the client re-discovers the leader (highest
-  epoch, across every node address) and retries against the new leader.
+Discovers the current leader and generates with failover-aware retry. If the leader dies
+mid-request (connection drops), the client re-discovers the leader (highest epoch, across
+every node address) and retries against the new leader.
 """
 
 import argparse
 import logging
 import sys
 import time
-from pathlib import Path
 
 import httpx
 
-from mixup_core.constants import MODEL_DIR
 from mixup_core.hosts import node_urls
 from mixup_core.logging_config import configure_logging
 from mixup_core.startup_config import load_startup_config
@@ -107,35 +101,6 @@ class ClusterClient:
         return None
 
 
-class LocalModel:
-    """The whole model in memory, on the GPU, answering prompts in-process."""
-
-    def __init__(self, model_dir: Path) -> None:
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        self.torch = torch
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
-        self.model = (
-            AutoModelForCausalLM.from_pretrained(model_dir, dtype=torch.bfloat16)
-            .to(self.device)
-            .eval()
-        )
-        print(f"[local] loaded {model_dir} on {self.device}", file=sys.stderr)
-
-    def generate(self, prompt: str, max_new_tokens: int) -> tuple[str, int, float]:
-        """Greedy generation; returns (new text, tokens generated, seconds)."""
-        ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.model.device)
-        prompt_len = ids.shape[1]
-        start = time.monotonic()
-        with self.torch.no_grad():
-            out = self.model.generate(ids, max_new_tokens=max_new_tokens, do_sample=False)
-        elapsed = time.monotonic() - start
-        tokens = out.shape[1] - prompt_len
-        return self.tokenizer.decode(out[0][prompt_len:]), tokens, elapsed
-
-
 def _report(
     text: str,
     tokens: int,
@@ -154,33 +119,10 @@ def _report(
     print(line, file=sys.stderr)
 
 
-def run_local(prompt: str | None, max_new_tokens: int, model_dir: Path) -> int:
-    """Load the full model once, then answer one prompt (or an interactive loop)."""
-    model = LocalModel(model_dir)
-    if prompt is not None:
-        _report(*model.generate(prompt, max_new_tokens))
-        return 0
-    for line in sys.stdin:
-        line = line.strip()
-        if line:
-            _report(*model.generate(line, max_new_tokens))
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     configure_logging()
-    parser = argparse.ArgumentParser(description="Prompt the mixup model.")
-    parser.add_argument(
-        "prompt", nargs="?", help="the prompt to send (omit with --local for a REPL loop)"
-    )
-    parser.add_argument(
-        "--local",
-        action="store_true",
-        help="load the whole model locally (GPU if available); do not use the cluster",
-    )
-    parser.add_argument(
-        "--model-dir", type=Path, default=MODEL_DIR, help="path to the model directory"
-    )
+    parser = argparse.ArgumentParser(description="Prompt the mixup cluster.")
+    parser.add_argument("prompt", nargs="?", help="the prompt to send")
     parser.add_argument(
         "--config", default="startup_config.json", help="startup_config.json or lab_config.json"
     )
@@ -201,10 +143,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.local:
-        return run_local(args.prompt, args.max_new_tokens or 500, args.model_dir)
     if args.prompt is None:
-        parser.error("a prompt is required unless --local is given")
+        parser.error("a prompt is required")
 
     config = load_startup_config(args.config)
     max_new_tokens = (

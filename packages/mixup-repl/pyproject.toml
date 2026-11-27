@@ -10,14 +10,10 @@ requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.27.0",
     "mixup-core",
-    "textual>=0.89.0",
-    "torch>=2.14.1",
-    "transformers>=5.24.1",
 ]
 
 [project.scripts]
 mixup-repl = "mixup_repl.repl:main"
-mixup-tui = "mixup_repl.tui:main"
 
 [tool.uv.sources]
 mixup-core = { workspace = true }

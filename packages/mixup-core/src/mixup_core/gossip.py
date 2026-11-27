@@ -8,13 +8,12 @@ pings and, on timeout, emits a ``Suspect``.
 References: [SWIM], [Serf-gossip].
 """
 
-from pydantic import BaseModel
-
+from .base import StrictModel
 from .runtime import ClusterView, MemberState
 from .types import Epoch, Incarnation, MemberStatus, NodeId
 
 
-class Ping(BaseModel):
+class Ping(StrictModel):
     """Direct probe from the sender to a target (node_id is the sender)."""
 
     node_id: NodeId
@@ -23,7 +22,7 @@ class Ping(BaseModel):
     kv_seq: int
 
 
-class Ack(BaseModel):
+class Ack(StrictModel):
     """Reply to a ping; node_id is the node being acked."""
 
     node_id: NodeId
@@ -33,7 +32,7 @@ class Ack(BaseModel):
     routing_epoch: Epoch = 0
 
 
-class PingReq(BaseModel):
+class PingReq(StrictModel):
     """Ask a peer to indirectly probe `target` on our behalf."""
 
     from_node: NodeId
@@ -41,7 +40,7 @@ class PingReq(BaseModel):
     incarnation: Incarnation
 
 
-class Suspect(BaseModel):
+class Suspect(StrictModel):
     """Declare `node_id` suspect (direct + indirect probes failed)."""
 
     node_id: NodeId
@@ -49,7 +48,7 @@ class Suspect(BaseModel):
     by_node: NodeId
 
 
-class Alive(BaseModel):
+class Alive(StrictModel):
     """Declare `node_id` alive; a higher incarnation revives a suspect/dead member."""
 
     node_id: NodeId
@@ -57,7 +56,7 @@ class Alive(BaseModel):
     epoch: Epoch
 
 
-class Dead(BaseModel):
+class Dead(StrictModel):
     """Declare `node_id` dead."""
 
     node_id: NodeId

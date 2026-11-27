@@ -8,12 +8,11 @@ bytes (which are safetensors, handled in mixup-node).
 References: [Raft] (log replication), [HF-generation].
 """
 
-from pydantic import BaseModel
-
+from .base import StrictModel
 from .types import Epoch
 
 
-class LedgerHeader(BaseModel):
+class LedgerHeader(StrictModel):
     """Metadata for one KV-cache ledger entry (one generated token)."""
 
     kv_seq: int
@@ -42,7 +41,7 @@ def decode_header(body: bytes) -> LedgerHeader:
     return LedgerHeader.model_validate_json(body)
 
 
-class Checkpoint(BaseModel):
+class Checkpoint(StrictModel):
     """A token-sequence checkpoint for resume (the plan's replay/recovery path).
 
     ``input_ids`` is the full sequence so far (prompt + generated); ``kv_seq`` is how many
@@ -65,7 +64,7 @@ def decode_checkpoint(body: bytes) -> Checkpoint:
     return Checkpoint.model_validate_json(body)
 
 
-class KvState(BaseModel):
+class KvState(StrictModel):
     """A warm KV-cache snapshot the leader broadcasts so followers can resume it.
 
     ``cache_b64`` is the base64 of the safetensors-serialized ``DynamicCache``; the other

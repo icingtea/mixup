@@ -8,9 +8,11 @@ simulator can be unit-tested on the host.
 """
 
 from enum import StrEnum
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import Field
 
+from .base import StrictModel
 from .types import NodeId
 
 
@@ -34,7 +36,7 @@ class ProfileMode(StrEnum):
     HYBRID = "hybrid"
 
 
-class DeviceProfile(BaseModel):
+class DeviceProfile(StrictModel):
     """Static, per-device capabilities and measured latencies.
 
     ``expert_fixed_ms`` / ``expert_per_ms`` are the key serving numbers: they come from
@@ -44,7 +46,7 @@ class DeviceProfile(BaseModel):
     """
 
     node_id: NodeId
-    execution: ExecutionType
+    execution: Annotated[ExecutionType, Field(strict=False)]
 
     # compute capability (informational + simulator)
     cpu_cores: int = 1
@@ -79,7 +81,7 @@ class DeviceProfile(BaseModel):
         return self.execution is ExecutionType.GPU
 
 
-class ResourceState(BaseModel):
+class ResourceState(StrictModel):
     """Dynamic, time-varying resource measurements for one device.
 
     ``rtt_ms`` is the measured round-trip time from the observing node to each peer; the

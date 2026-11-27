@@ -1,20 +1,36 @@
 """Tests for the placement planner (perception -> routing table)."""
 
+import random
+
+from mixup_core.devices import DeviceProfile, ExecutionType
 from mixup_core.planner import plan_routing
-from mixup_core.profiles import DeviceSpec
 from mixup_core.runtime import RoutingTable
-from mixup_core.tracegen import generate_trace, trace_to_stats
+from mixup_core.stats import ActivationStats
 
 
 def _hetero(num_experts: int = 32, num_layers: int = 24, tokens: int = 150, seed: int = 0):
-    trace = generate_trace(num_layers, num_experts, 8, tokens, zipf=1.0, seed=seed)
-    stats = trace_to_stats(trace, num_layers, num_experts)
-    specs = {
-        "gpu": DeviceSpec(execution="gpu", expert_fixed_ms=0.2, expert_per_ms=0.08),
-        "pi1": DeviceSpec(execution="cpu", expert_fixed_ms=2.0, expert_per_ms=3.0),
-        "pi2": DeviceSpec(execution="cpu", expert_fixed_ms=2.0, expert_per_ms=3.0),
+    # A few "hot" experts dominate each layer, matching real MoE routing concentration.
+    rng = random.Random(seed)
+    hot = rng.sample(range(num_experts), 8)
+    stats = ActivationStats(num_layers=num_layers, num_experts=num_experts)
+    for _ in range(tokens):
+        layers = [
+            list(hot[:4]) + [rng.randrange(num_experts) for _ in range(4)]
+            for _ in range(num_layers)
+        ]
+        stats.record(layers)
+
+    profiles = {
+        "gpu": DeviceProfile(
+            node_id="gpu", execution=ExecutionType.GPU, expert_fixed_ms=0.2, expert_per_ms=0.08
+        ),
+        "pi1": DeviceProfile(
+            node_id="pi1", execution=ExecutionType.CPU, expert_fixed_ms=2.0, expert_per_ms=3.0
+        ),
+        "pi2": DeviceProfile(
+            node_id="pi2", execution=ExecutionType.CPU, expert_fixed_ms=2.0, expert_per_ms=3.0
+        ),
     }
-    profiles = {name: spec.to_profile(name) for name, spec in specs.items()}
     return profiles, stats
 
 

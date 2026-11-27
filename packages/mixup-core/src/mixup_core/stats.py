@@ -7,17 +7,15 @@ distribution (p95 per-node load) instead of only the mean.
 """
 
 from collections import deque
-from pathlib import Path
 
-from pydantic import BaseModel
-
+from .base import StrictModel
 from .types import ExpertId
 
 DEFAULT_MAX_SAMPLES = 1024
 """Bounded token samples kept for joint-distribution estimates; marginals stay exact."""
 
 
-class ActivationStats(BaseModel):
+class ActivationStats(StrictModel):
     """Per-layer expert activation frequencies plus a bounded sample of selections."""
 
     num_layers: int
@@ -119,32 +117,3 @@ class TraceBuffer:
             samples=list(self.samples),
             max_samples=self.max_samples,
         )
-
-
-def load_trace_file(
-    path: str | Path, max_samples: int = DEFAULT_MAX_SAMPLES
-) -> ActivationStats:
-    """Load a ``mixup-trace`` JSONL file (one ``{"token", "layers"}`` per line) into stats.
-
-    ``num_layers`` / ``num_experts`` are inferred from the first token; ``max_samples`` caps
-    the retained token samples (the marginals stay exact for all tokens).
-    """
-    import json
-
-    tokens: list[list[list[ExpertId]]] = []
-    for line in Path(path).read_text().splitlines():
-        if not line.strip():
-            continue
-        tokens.append(json.loads(line)["layers"])
-
-    if not tokens:
-        raise ValueError(f"trace file {path} is empty")
-
-    num_layers = len(tokens[0])
-    num_experts = max(max(layer) for token in tokens for layer in token) + 1
-    stats = ActivationStats(
-        num_layers=num_layers, num_experts=num_experts, max_samples=max_samples
-    )
-    for token in tokens:
-        stats.record(token)
-    return stats

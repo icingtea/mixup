@@ -11,8 +11,7 @@ Phase 6. The *trained* predictors (logistic regression, 2-layer MLP) live in
 
 from typing import Protocol
 
-from pydantic import BaseModel
-
+from .base import StrictModel
 from .stats import ActivationStats
 from .types import ExpertId
 
@@ -41,7 +40,7 @@ class FrequencyPredictor:
         return list(self._marginals[nxt])
 
 
-class PredictorState(BaseModel):
+class PredictorState(StrictModel):
     """A versioned snapshot of the leader's predictor weights, for failover sync.
 
     ``weights_b64`` is the model-dependent serialized weights (empty for the frequency

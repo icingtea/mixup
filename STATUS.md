@@ -3,14 +3,30 @@
 > Everything below is committed; the working tree is clean. Read
 > `docs/plan/phase-10-heterogeneous-placement.md` for the full phased plan.
 
-## TL;DR — project state after the 12-hour sprint
+## TL;DR — project state
 
-The heuristics plan is **~90% done**. Phases 0–6 are implemented and lab-validated; what
-remains is Phase 7 (real-testbed deployment, needs hardware) plus two minor Phase 3
-telemetry wirings.
+The heuristics plan is **~90% done**. Phases 0–6 are implemented and lab-validated, merged
+to `master`, and code-cleaned. What remains is Phase 7 (real-testbed deployment, needs
+hardware) plus two residual quirks (boot-settling, distributed BF16 non-determinism).
 
-- Branch: `feat/heterogeneous-placement`, clean tree.
-- **259 tests pass, ruff clean.** (Test venv `/tmp/mixup-test-venv`, torch-free.)
+- Branch: `master` (feature branch `feat/heterogeneous-placement` merged).
+- **238 tests pass, ruff clean.** (Test venv `/tmp/mixup-test-venv`, torch-free.)
+
+## Surface area (post-cleanup)
+
+The codebase is reduced to the runtime + the three user-facing entry points:
+
+- `mixup-core` — pure pydantic models (strict validation via `mixup_core.base.StrictModel`),
+  cost model, placement, residency, gossip/election, commit log.
+- `mixup-node` — in-container runtime (torch/CUDA): `mixup-node`.
+- `mixup-orchestrator` — host-side lab: `mixup-lab`, `mixup-fetch-model`.
+- `mixup-repl` — CLI benchmark client (failover-aware): `mixup-repl`.
+- `mixup-web` — SvelteKit web UI (chat, metrics, local baseline).
+
+Removed (dead / superseded / eval-only): `mixup-tui`, `mixup-place`, `mixup-smoketest`,
+`mixup-bench`, `mixup-trace`, `mixup-orchestrator`, the simulator (`sim.py`), trace
+generation (`tracegen.py`), device-spec presets (`profiles.py`), the old HTTP gossip
+transport (`gossip_http.py`), and `scripts/*` (smoke tests + offline predictor training).
 
 ## Done (all lab-validated on this machine)
 
@@ -38,10 +54,11 @@ telemetry wirings.
 
 ## Remaining
 
-1. **Phase 3 telemetry wiring** (minor): feed measured RTT into the cost model (currently
-   `rtt_ms=0`), online EWMA correction of `expert_fixed_ms`/`expert_per_ms`, use the
-   heterogeneity score `H_d` in placement.
-2. **Phase 7 deployment** (needs the physical 3070/3060/2×Pi testbed): multi-host
+1. **Boot-settling quirk** — the first generation after a fresh `mixup-lab` can be
+   short/odd while the cluster rebalances; subsequent generations are clean.
+2. **Distributed BF16 non-determinism** — the same prompt can give different (each coherent)
+   outputs across runs because the distributed reduce rounds differently after a re-plan.
+3. **Phase 7 deployment** (needs the physical 3070/3060/2×Pi testbed): multi-host
    Docker-over-SSH, CUDA/ARM image variants, model sync, real-device calibration, rerun the
    validation matrix. Tooling can be written here; final validation needs the hardware.
 
@@ -65,7 +82,7 @@ curl localhost:9000/routing   # expert -> {node, slot, backup}
 curl localhost:9000/store     # leader's own expert store
 curl -X POST localhost:9000/replan
 
-# web GUI (SvelteKit; replaces the Textual mixup-tui)
+# web GUI (SvelteKit)
 cd apps/mixup-web && npm install && npm run dev   # http://127.0.0.1:5173
 ```
 
@@ -74,13 +91,13 @@ Docker logs: `docker logs container_1` (leader) etc. Metrics ledger: `var/ledger
 ## Gotchas
 
 - Torch code only runs inside Docker; the test venv can't import `mixup_node`'s torch
-  modules. Torch checks go in `scripts/*.py`, run via `docker run --rm --device
-  nvidia.com/gpu=all -v "$PWD/packages:/usr/local/app/packages:ro" -v
-  "$PWD/models:/usr/local/app/models:ro" -v "$PWD/scripts/X.py:/tmp/s.py:ro" --entrypoint
-  python mixup:latest /tmp/s.py`.
+  modules (the test venv is torch-free).
 - `lab_config.json` is the emulated-lab config (`{startup, profiles, specs, profile_mode}`);
   `load_startup_config()` accepts both it and the flat `startup_config.json`.
 - Failover is slow by design (~15s detection from 5s/10s gossip timeouts + ~5s dense load).
+- Core models are strict (`mixup_core.base.StrictModel`): no implicit type coercion, except
+  `StrEnum` fields (declared `Field(strict=False)`) because JSON carries enum values as
+  strings, and `RoutingTable.assignment` keys (coerced from string by a validator).
 - Known residual quirk: a node reloading experts can be falsely marked DEAD ~50s after boot
   (not in the 15s grace window), causing a needless failover that over-loads the leader.
   Performance issue, not correctness.

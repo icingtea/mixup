@@ -8,8 +8,7 @@ emits nothing below it and never re-emits a committed token.
 Pure pydantic, torch-free, so the quorum logic is unit-testable.
 """
 
-from pydantic import BaseModel
-
+from .base import StrictModel
 from .types import Epoch
 
 
@@ -18,7 +17,7 @@ def quorum_size(n: int) -> int:
     return n // 2 + 1
 
 
-class CommitRecord(BaseModel):
+class CommitRecord(StrictModel):
     """One generated token and the state needed to resume after it."""
 
     term: Epoch
@@ -34,7 +33,7 @@ class CommitRecord(BaseModel):
     """The global KV-cache sequence at this step (for warm resume)."""
 
 
-class CommitLog(BaseModel):
+class CommitLog(StrictModel):
     """An append-only token log with a monotonic committed watermark."""
 
     records: list[CommitRecord] = []

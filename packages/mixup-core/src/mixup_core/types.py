@@ -6,7 +6,9 @@ nodes depend on, so it stays free of torch/docker/fastapi: pure pydantic.
 
 from enum import StrEnum
 
-from pydantic import BaseModel, field_validator
+from pydantic import field_validator
+
+from .base import StrictModel
 
 ContainerName = str
 """A node's name, which is also its hostname on the Docker network, e.g. "container_2"."""
@@ -55,7 +57,7 @@ class MemberStatus(StrEnum):
     DEAD = "dead"
 
 
-class StartupConfig(BaseModel):
+class StartupConfig(StrictModel):
     """The *initial* cluster layout, read from startup_config.json on the host.
 
     This describes only the boot-time arrangement: which node starts as leader and
@@ -99,14 +101,14 @@ class StartupConfig(BaseModel):
         return NodeRole.LEADER if name == self.initial_leader else NodeRole.EXPERT
 
 
-class GenerateRequest(BaseModel):
+class GenerateRequest(StrictModel):
     """A generation request sent to the leader's ``POST /generate``."""
 
     prompt: str
     max_new_tokens: int = 500
 
 
-class GenerateResponse(BaseModel):
+class GenerateResponse(StrictModel):
     """The leader's reply to a generation request, with benchmark metrics.
 
     ``dense_seconds`` is the leader's own (non-distributed) compute; ``dispatch_seconds``

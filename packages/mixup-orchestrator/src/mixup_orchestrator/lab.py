@@ -26,7 +26,7 @@ from mixup_core.env import NODE_ENV_VAR, NodeEnv, dump_node_env
 from mixup_core.lab import LabConfig
 from mixup_core.logging_config import configure_logging
 
-from .distribute import get_or_create_network
+from .network import get_or_create_network
 
 logger = logging.getLogger(__name__)
 

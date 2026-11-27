@@ -5,12 +5,15 @@ it changes at runtime. All of it is pure pydantic — no torch, no sockets — s
 scheduler, election, and gossip state machine can be unit-tested on the host.
 """
 
-from pydantic import BaseModel
+from typing import Annotated
 
+from pydantic import Field, field_validator
+
+from .base import StrictModel
 from .types import Epoch, ExpertId, Incarnation, MemberStatus, NodeId, NodePriority, NodeRole
 
 
-class LoadMetrics(BaseModel):
+class LoadMetrics(StrictModel):
     """A node's reported load, used by the placement policy (Phase 6)."""
 
     active_requests: int = 0
@@ -26,12 +29,12 @@ class LoadMetrics(BaseModel):
     """Reported free memory."""
 
 
-class MemberState(BaseModel):
+class MemberState(StrictModel):
     """Everything a node knows about one member (itself or a peer)."""
 
     node_id: NodeId
-    role: NodeRole
-    status: MemberStatus = MemberStatus.ALIVE
+    role: Annotated[NodeRole, Field(strict=False)]
+    status: Annotated[MemberStatus, Field(strict=False)] = MemberStatus.ALIVE
     epoch: Epoch
     incarnation: Incarnation
     priority: NodePriority
@@ -41,7 +44,7 @@ class MemberState(BaseModel):
     """The freshest KV-cache ledger entry this member holds (election credential)."""
 
 
-class RoutingEntry(BaseModel):
+class RoutingEntry(StrictModel):
     """Where one expert lives in the live routing table."""
 
     node_id: NodeId
@@ -52,7 +55,7 @@ class RoutingEntry(BaseModel):
     """The node that backs this expert up (takes over on primary failure)."""
 
 
-class RoutingTable(BaseModel):
+class RoutingTable(StrictModel):
     """The versioned ``ExpertId -> RoutingEntry`` map (the live LUT).
 
     ``epoch`` makes a stale table unable to overwrite a newer one. The ordering is
@@ -62,6 +65,14 @@ class RoutingTable(BaseModel):
 
     epoch: Epoch
     assignment: dict[ExpertId, RoutingEntry]
+
+    @field_validator("assignment", mode="before")
+    @classmethod
+    def _coerce_int_keys(cls, value: object) -> object:
+        """Accept the string keys a JSON round-trip produces (``{"0": ...}``)."""
+        if isinstance(value, dict):
+            return {int(k): v for k, v in value.items()}
+        return value
 
     def is_newer_than(self, other: "RoutingTable") -> bool:
         """True if ``self`` should replace ``other`` (higher epoch, or deterministic tie-break)."""
@@ -77,14 +88,14 @@ class RoutingTable(BaseModel):
         return ",".join(items)
 
 
-class ClusterView(BaseModel):
+class ClusterView(StrictModel):
     """A node's aggregate view of the cluster: membership + current routing table."""
 
     members: dict[NodeId, MemberState]
     routing: RoutingTable | None = None
 
 
-class LeaderProjection(BaseModel):
+class LeaderProjection(StrictModel):
     """What ``GET /leader`` returns: a read-only projection of the current view."""
 
     leader: NodeId | None

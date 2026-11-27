@@ -21,6 +21,7 @@ from requests.exceptions import RequestException
 from torch import Tensor
 
 from mixup_core.constants import EXPERT_PORT, address
+from mixup_core.fits import fit_linear
 from mixup_core.runtime import RoutingTable
 from mixup_core.stats import TraceBuffer
 
@@ -35,21 +36,6 @@ RTT_ALPHA = 0.3
 
 COST_SAMPLE_LIMIT = 500
 """Cap on retained (n_experts, server_ms) samples per node for the online cost fit."""
-
-
-def _fit_fixed_per(samples: list[tuple[int, float]]) -> tuple[float, float]:
-    """Least-squares fit of ``t(n) = fixed + per * n`` over ``(n, t_ms)`` samples."""
-    n = len(samples)
-    if n < 2:
-        return 0.0, 0.0
-    sx = sum(k for k, _ in samples)
-    sy = sum(t for _, t in samples)
-    sxx = sum(k * k for k, _ in samples)
-    sxy = sum(k * t for k, t in samples)
-    denom = n * sxx - sx * sx
-    per = (n * sxy - sx * sy) / denom if denom else 0.0
-    fixed = (sy - per * sx) / n if n else 0.0
-    return max(0.0, fixed), max(0.0, per)
 
 
 class _NodeFailure(Exception):
@@ -358,7 +344,7 @@ class Dispatcher:
         falls back to its static profile.
         """
         return {
-            node: _fit_fixed_per(samples) if len(samples) >= min_samples else None
+            node: fit_linear(samples) if len(samples) >= min_samples else None
             for node, samples in self._cost_samples.items()
         }
 

@@ -11,6 +11,3 @@ dependencies = [
     "pydantic>=2.14.2",
 ]
 
-[project.scripts]
-mixup-smoketest = "mixup_core.smoketest:main"
-mixup-place = "mixup_core.place_cli:main"
