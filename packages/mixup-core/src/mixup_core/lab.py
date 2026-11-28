@@ -42,6 +42,11 @@ class LabNodeSpec(StrictModel):
     Use this when the model is already on the device (e.g. rsynced to ``~/mixup/models``),
     which avoids a duplicate copy and the HF download."""
 
+    host_network: bool = True
+    """Use Docker ``--network host`` for cross-host nodes (Linux). Set ``False`` for Docker
+    Desktop (Windows/macOS), which does not expose host-networked ports on the real host;
+    the node then uses bridge networking + explicit port publishing instead."""
+
 
 class LabConfig(StrictModel):
     """A cluster: startup layout + profiles + per-node run specs."""

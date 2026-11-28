@@ -97,7 +97,9 @@
     "monad-windows-old": {
       "execution": "gpu",
       "docker_host": "ssh://lalit@monad-windows-old",
-      "gpu_mode": "nvidia"
+      "gpu_mode": "nvidia",
+      "model_bind": "C:/Users/lalit/mixup/models",
+      "host_network": false
     },
     "lambda": {
       "execution": "cpu",

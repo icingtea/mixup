@@ -130,7 +130,9 @@ def _ports_for(
     """Published ports: endpoint-derived for deployments, local offset for the emulated lab."""
     endpoint = lab.startup.endpoints.get(node)
     if endpoint is not None:
-        bind_ip = _bind_ip(endpoint, spec)
+        # Docker Desktop (host_network=False) publishes on all interfaces; it cannot bind
+        # to a specific Tailscale IP the way Linux host networking can.
+        bind_ip = _bind_ip(endpoint, spec) if spec.host_network else None
         control = _host_port(endpoint.http) or (EXTERNAL_PORT_BASE + offset)
         expert = endpoint.expert_port
         return [
@@ -205,22 +207,24 @@ def plan_run_specs(
         environment = {NODE_ENV_VAR: dump_node_env(node_env)}
         if gpu is GpuMode.NONE:
             environment["CUDA_VISIBLE_DEVICES"] = ""
+        use_host_net = bool(lab.startup.endpoints) and node_spec.host_network
         run = RunSpec(
             node=node,
             docker_host=node_spec.docker_host,
             image=lab.image,
             container_name=node,
             environment=environment,
-            ports=[] if lab.startup.endpoints else _ports_for(lab, node, offset, node_spec),
+            ports=[] if use_host_net else _ports_for(lab, node, offset, node_spec),
             volumes=_volumes_for(lab, node, node_spec),
             gpu=gpu,
             nano_cpus=int(node_spec.cpus * 1e9) if node_spec.cpus else None,
             mem_limit_mb=node_spec.memory_mb,
             network=None if lab.startup.endpoints else NETWORK_NAME,
-            # Cross-host nodes use host networking so they share the host's network
-            # namespace: the node binds 8000/8001 directly on the host (no port
-            # publishing, no hairpin-NAT self-reachability problem).
-            network_mode="host" if lab.startup.endpoints else None,
+            # Cross-host nodes share the host's network namespace so they bind 8000/8001
+            # directly on the host (no port publishing, no hairpin-NAT self-reachability
+            # problem). Docker Desktop (host_network=False) can't do that, so those nodes
+            # fall back to bridge networking + published ports.
+            network_mode="host" if use_host_net else None,
             labels={
                 _CLUSTER_LABEL: lab.cluster_name,
                 _NODE_LABEL: node,

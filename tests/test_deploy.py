@@ -114,6 +114,19 @@ def test_deployed_plan_ports_and_volumes() -> None:
     assert local.gpu is GpuMode.CDI
 
 
+def test_deployed_plan_docker_desktop_bridge() -> None:
+    """A cross-host node with host_network=False (Docker Desktop) bridges + publishes ports."""
+    lab = _deployed()
+    lab.specs["monad-windows"].host_network = False
+    specs = plan_run_specs(lab, "hi", 10)
+
+    remote = specs["monad-windows"]
+    assert remote.network is None
+    assert remote.network_mode is None  # bridge, not host
+    assert [p.host_port for p in remote.ports] == [9000, 9001]
+    assert all(p.bind_ip is None for p in remote.ports)  # publish on all interfaces
+
+
 def test_run_spec_hash_detects_change() -> None:
     specs = plan_run_specs(_deployed(), "hi", 10)
     a = run_spec_hash(specs["monad-windows"])
