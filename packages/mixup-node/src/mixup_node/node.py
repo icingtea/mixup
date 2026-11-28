@@ -98,18 +98,20 @@ def _assignment_summary(table: RoutingTable) -> dict[str, int]:
 
 
 def broadcast_routing(view: ClusterView, by_node: str, resolver: EndpointResolver) -> None:
-    """Push the current routing table to every expert node (so they load new experts).
+    """Push the current routing table to every alive member.
 
-    Iterates the routing table's expert nodes (not the membership roster), so a node that
-    was rebalanced away or died is not contacted. Fire-and-forget on a background thread so
-    a slow or dead peer never stalls the caller (the gossip loop or the /join handler); the
-    nodes reload asynchronously via /routing anyway.
+    Broadcasts to the alive membership (not just expert-owning nodes), so a node that was
+    rebalanced down to zero experts still receives the table and clears its stale expert
+    group. Fire-and-forget on a background thread so a slow or dead peer never stalls the
+    caller; nodes reload asynchronously via /routing anyway.
     """
     table = view.routing
     if table is None:
         return
     payload = table.model_dump()
-    nodes = sorted({entry.node_id for entry in table.assignment.values()})
+    nodes = sorted(
+        m.node_id for m in view.members.values() if m.status == MemberStatus.ALIVE
+    )
     threading.Thread(
         target=_broadcast_routing, args=(payload, nodes, table.epoch, resolver), daemon=True
     ).start()
@@ -562,11 +564,17 @@ class Node:
                     Alive(node_id=node_id, incarnation=inc, epoch=member.epoch),
                 )
             )
-            if self.replan() is not None:
+            new_table = self.replan()
+            if new_table is not None and any(
+                entry.node_id == node_id for entry in new_table.assignment.values()
+            ):
                 logger.info(
                     "%s: rebalanced after %s rejoined (via replan)", self.name, node_id
                 )
                 return
+            # The churn-aware planner may leave the rejoined node with zero experts
+            # (it re-homed them during the failover and amortizes the move cost over a
+            # long horizon). Fall through to the even reshuffle so the node gets a share.
 
         def _rebalance(v: ClusterView) -> ClusterView:
             v = apply_gossip(
