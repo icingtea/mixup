@@ -3,7 +3,7 @@
   "cluster_name": "home",
   "startup": {
     "initial_leader": "monad-nix",
-    "nodes": ["monad-nix", "lambda"],
+    "nodes": ["monad-nix", "lambda", "monad-windows-old", "pi-inch-nails"],
     "endpoints": {
       "monad-nix": {
         "http": "http://100.102.170.72:8000",
@@ -14,11 +14,23 @@
         "http": "http://100.97.234.24:8000",
         "expert_host": "100.97.234.24",
         "expert_port": 8001
+      },
+      "monad-windows-old": {
+        "http": "http://100.102.81.48:8000",
+        "expert_host": "100.102.81.48",
+        "expert_port": 8001
+      },
+      "pi-inch-nails": {
+        "http": "http://100.89.94.89:8000",
+        "expert_host": "100.89.94.89",
+        "expert_port": 8001
       }
     },
     "experts": {
-      "monad-nix": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-      "lambda": [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+      "monad-nix": [0, 1, 2, 3, 4, 5, 6, 7],
+      "monad-windows-old": [8, 9, 10, 11, 12, 13, 14, 15],
+      "lambda": [16, 17, 18, 19, 20, 21, 22, 23],
+      "pi-inch-nails": [24, 25, 26, 27, 28, 29, 30, 31]
     },
     "kv_sync_every": 5,
     "predictor_kind": "mlp",
@@ -39,8 +51,32 @@
       "expert_budget_bytes": 1500000000,
       "disk_read_mbps": 1057.0
     },
+    "monad-windows-old": {
+      "node_id": "monad-windows-old",
+      "execution": "gpu",
+      "cpu_cores": 8,
+      "gpu_tflops": 13.0,
+      "expert_fixed_ms": 0.9,
+      "expert_per_ms": 0.07,
+      "ram_bytes": 17179869184,
+      "vram_bytes": 6442450944,
+      "expert_budget_bytes": 1000000000,
+      "disk_read_mbps": 1200.0
+    },
     "lambda": {
       "node_id": "lambda",
+      "execution": "cpu",
+      "cpu_cores": 4,
+      "gpu_tflops": null,
+      "expert_fixed_ms": 15.0,
+      "expert_per_ms": 1.2,
+      "ram_bytes": 8589934592,
+      "vram_bytes": null,
+      "expert_budget_bytes": 2000000000,
+      "disk_read_mbps": 90.0
+    },
+    "pi-inch-nails": {
+      "node_id": "pi-inch-nails",
       "execution": "cpu",
       "cpu_cores": 4,
       "gpu_tflops": null,
@@ -58,12 +94,25 @@
       "docker_host": "local",
       "gpu_mode": "cdi"
     },
+    "monad-windows-old": {
+      "execution": "gpu",
+      "docker_host": "ssh://lalit@monad-windows-old",
+      "gpu_mode": "nvidia"
+    },
     "lambda": {
       "execution": "cpu",
       "docker_host": "ssh://lait@lambda",
       "gpu_mode": "none",
       "memory_mb": 6144,
       "cpus": 3.0
+    },
+    "pi-inch-nails": {
+      "execution": "cpu",
+      "docker_host": "ssh://jia@pi-inch-nails",
+      "gpu_mode": "none",
+      "memory_mb": 6144,
+      "cpus": 3.0,
+      "model_bind": "/home/jia/mixup/models"
     }
   },
   "profile_mode": "hybrid"

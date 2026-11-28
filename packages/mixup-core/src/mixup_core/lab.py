@@ -37,6 +37,11 @@ class LabNodeSpec(StrictModel):
     """Host IP to bind the published ports to. ``None`` = auto (the node's endpoint IP
     when it is a literal, else all interfaces)."""
 
+    model_bind: str | None = None
+    """Remote host path to bind-mount as the model dir (instead of a named volume + fetch).
+    Use this when the model is already on the device (e.g. rsynced to ``~/mixup/models``),
+    which avoids a duplicate copy and the HF download."""
+
 
 class LabConfig(StrictModel):
     """A cluster: startup layout + profiles + per-node run specs."""

@@ -143,7 +143,8 @@ def _ports_for(
 
 
 def _volumes_for(lab: LabConfig, node: str, spec: LabNodeSpec) -> list[VolumeMount]:
-    """Local nodes bind the existing ``models/``/``var/ledger``; remote nodes use volumes."""
+    """Local nodes bind the existing ``models/``/``var/ledger``; remote nodes use volumes,
+    or a pre-synced bind path when ``spec.model_bind`` is set (no duplicate copy / fetch)."""
     if spec.docker_host == "local":
         return [
             VolumeMount(
@@ -156,6 +157,21 @@ def _volumes_for(lab: LabConfig, node: str, spec: LabNodeSpec) -> list[VolumeMou
                 container_path=CONTAINER_LEDGER_DIR,
                 source=str(LEDGER_DIR.resolve()),
                 kind="bind",
+                mode="rw",
+            ),
+        ]
+    if spec.model_bind:
+        return [
+            VolumeMount(
+                container_path=CONTAINER_MODELS_DIR,
+                source=spec.model_bind,
+                kind="bind",
+                mode="ro",
+            ),
+            VolumeMount(
+                container_path=CONTAINER_LEDGER_DIR,
+                source=_volume_name(lab.cluster_name, node),
+                kind="volume",
                 mode="rw",
             ),
         ]
