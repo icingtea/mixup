@@ -3,28 +3,28 @@
   "cluster_name": "home",
   "startup": {
     "initial_leader": "monad-nix",
-    "nodes": ["monad-nix", "monad-windows-old", "pi-inch-nails"],
+    "nodes": ["monad-nix", "lambda", "monad-windows-old"],
     "endpoints": {
       "monad-nix": {
         "http": "http://100.102.170.72:9000",
         "expert_host": "100.102.170.72",
         "expert_port": 9001
       },
+      "lambda": {
+        "http": "http://100.97.234.24:9000",
+        "expert_host": "100.97.234.24",
+        "expert_port": 9001
+      },
       "monad-windows-old": {
         "http": "http://100.102.81.48:9000",
         "expert_host": "100.102.81.48",
-        "expert_port": 9001
-      },
-      "pi-inch-nails": {
-        "http": "http://100.89.94.89:9000",
-        "expert_host": "100.89.94.89",
         "expert_port": 9001
       }
     },
     "experts": {
       "monad-nix": [0, 1, 2, 3, 4, 5, 6, 7],
       "monad-windows-old": [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
-      "pi-inch-nails": [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+      "lambda": [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
     },
     "kv_sync_every": 5,
     "predictor_kind": "mlp",
@@ -57,8 +57,8 @@
       "expert_budget_bytes": 1000000000,
       "disk_read_mbps": 1200.0
     },
-    "pi-inch-nails": {
-      "node_id": "pi-inch-nails",
+    "lambda": {
+      "node_id": "lambda",
       "execution": "cpu",
       "cpu_cores": 4,
       "gpu_tflops": null,
@@ -81,9 +81,9 @@
       "docker_host": "ssh://lait@monad-windows-old",
       "gpu_mode": "nvidia"
     },
-    "pi-inch-nails": {
+    "lambda": {
       "execution": "cpu",
-      "docker_host": "ssh://lait@pi-inch-nails",
+      "docker_host": "ssh://lait@lambda",
       "gpu_mode": "none",
       "memory_mb": 6144,
       "cpus": 3.0
