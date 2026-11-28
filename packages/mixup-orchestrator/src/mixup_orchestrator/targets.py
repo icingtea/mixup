@@ -135,6 +135,7 @@ def start(client: docker.DockerClient, spec: RunSpec) -> None:
         name=spec.container_name,
         detach=True,
         network=spec.network,
+        network_mode=spec.network_mode,
         ports=_port_bindings(spec),
         restart_policy={"Name": spec.restart_policy},
         environment=spec.environment,

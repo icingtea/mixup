@@ -6,14 +6,14 @@
     "nodes": ["monad-nix", "lambda"],
     "endpoints": {
       "monad-nix": {
-        "http": "http://100.102.170.72:9000",
+        "http": "http://100.102.170.72:8000",
         "expert_host": "100.102.170.72",
-        "expert_port": 9001
+        "expert_port": 8001
       },
       "lambda": {
-        "http": "http://100.97.234.24:9000",
+        "http": "http://100.97.234.24:8000",
         "expert_host": "100.97.234.24",
-        "expert_port": 9001
+        "expert_port": 8001
       }
     },
     "experts": {

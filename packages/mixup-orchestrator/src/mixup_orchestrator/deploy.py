@@ -66,6 +66,7 @@ class RunSpec(StrictModel):
     mem_limit_mb: int | None = None
     restart_policy: str = "unless-stopped"
     network: str | None = None
+    network_mode: str | None = None
     labels: dict[str, str] = {}
 
 
@@ -194,12 +195,16 @@ def plan_run_specs(
             image=lab.image,
             container_name=node,
             environment=environment,
-            ports=_ports_for(lab, node, offset, node_spec),
+            ports=[] if lab.startup.endpoints else _ports_for(lab, node, offset, node_spec),
             volumes=_volumes_for(lab, node, node_spec),
             gpu=gpu,
             nano_cpus=int(node_spec.cpus * 1e9) if node_spec.cpus else None,
             mem_limit_mb=node_spec.memory_mb,
             network=None if lab.startup.endpoints else NETWORK_NAME,
+            # Cross-host nodes use host networking so they share the host's network
+            # namespace: the node binds 8000/8001 directly on the host (no port
+            # publishing, no hairpin-NAT self-reachability problem).
+            network_mode="host" if lab.startup.endpoints else None,
             labels={
                 _CLUSTER_LABEL: lab.cluster_name,
                 _NODE_LABEL: node,
@@ -224,7 +229,9 @@ def render_command(spec: RunSpec) -> str:
     if spec.docker_host != "local":
         argv += ["-H", spec.docker_host]
     argv += ["run", "-d", "--name", spec.container_name, "--restart", spec.restart_policy]
-    if spec.network is not None:
+    if spec.network_mode is not None:
+        argv += ["--network", spec.network_mode]
+    elif spec.network is not None:
         argv += ["--network", spec.network]
     if spec.nano_cpus is not None:
         argv += ["--cpus", f"{spec.nano_cpus / 1e9:g}"]

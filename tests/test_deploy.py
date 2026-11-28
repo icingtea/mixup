@@ -102,11 +102,9 @@ def test_deployed_plan_ports_and_volumes() -> None:
     remote = specs["monad-windows"]
     assert remote.docker_host == "ssh://lait@monad-windows"
     assert remote.network is None
+    assert remote.network_mode == "host"
     assert remote.gpu is GpuMode.NVIDIA
-    assert [p.model_dump() for p in remote.ports] == [
-        {"container_port": 8000, "host_port": 9000, "bind_ip": "100.90.0.1"},
-        {"container_port": 8001, "host_port": 9001, "bind_ip": "100.90.0.1"},
-    ]
+    assert remote.ports == []  # host networking: no port publishing
     assert remote.volumes[0].kind == "volume"
     assert remote.volumes[0].source == "home-models"
 
