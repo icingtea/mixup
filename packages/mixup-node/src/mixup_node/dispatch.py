@@ -1,7 +1,8 @@
 """Central-side dispatcher: fan expert work out to the containers and sum replies.
 
-The expert data path uses a persistent raw-TCP connection per node (see ``transport``);
-the control path (``/health``) stays on HTTP. On a connection failure the dispatcher
+The expert data path is a per-node HTTP POST (``POST /expert``, body = safetensors bytes)
+on the same FastAPI server as the control plane; the framework owns framing
+(Content-Length), keep-alive, and error reporting. On a connection failure the dispatcher
 invokes ``on_failure`` — which the central uses to rebalance and broadcast the new
 routing table — then retries against the new owner (Phase 6/7 failover).
 
@@ -10,7 +11,6 @@ round-trip and layer dispatch is also persisted.
 """
 
 import logging
-import struct
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -27,7 +27,6 @@ from mixup_core.stats import TraceBuffer
 
 from .metrics import MetricsCollector
 from .serialization import ExpertRequest, ExpertResponse
-from .transport import TCPConnection
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +38,12 @@ COST_SAMPLE_LIMIT = 500
 
 MAX_SEND_ATTEMPTS = 3
 """Times to retry a data-plane request when the reply is missing or malformed (a corrupted
-frame from a flaky NAT / Docker Desktop port-forward). The expert forward is a pure
+reply from a flaky NAT / Docker Desktop port-forward). The expert forward is a pure
 function of the request, so re-sending is safe."""
+
+EXPERT_TIMEOUT = 30.0
+"""Per-request timeout (seconds) for the expert POST. Generous enough for a slow ARM Pi
+computing one layer's experts, short enough that a dead node fails over reasonably fast."""
 
 
 class _NodeFailure(Exception):
@@ -80,9 +83,10 @@ class Dispatcher:
         self.expert_nodes = {entry.node_id for entry in table.assignment.values()}
         self._pool = ThreadPoolExecutor(max_workers=max(1, len(self.expert_nodes)))
         # A shared Session for the control path (/health polling), and one persistent
-        # raw-TCP connection per expert node for the data path.
+        # Session per expert node for the data path (keep-alive; each is driven by one
+        # thread at a time since generation is sequential across layers).
         self._session = requests.Session()
-        self._connections: dict[str, TCPConnection] = {}
+        self._sessions: dict[str, requests.Session] = {}
         self.metrics: MetricsCollector | None = None
         self._token = 0  # increments each time layer 0 is dispatched (a new token)
         self.rtt_ms: dict[str, float] = {}  # EWMA network RTT per node (ms)
@@ -156,28 +160,23 @@ class Dispatcher:
         """Adopt a new routing table (on failover or rejoin), refreshing the expert set."""
         self.table = table
         self.expert_nodes = {entry.node_id for entry in table.assignment.values()}
-        # Drop connections to nodes that are no longer experts (rebalanced away).
-        for container in list(self._connections):
+        # Drop sessions to nodes that are no longer experts (rebalanced away).
+        for container in list(self._sessions):
             if container not in self.expert_nodes:
-                self._drop_connection(container)
+                self._drop_session(container)
 
-    def _connection(self, container: str) -> TCPConnection:
-        """Return (lazily creating) the persistent data-plane connection to ``container``.
+    def _session_for(self, container: str) -> requests.Session:
+        """Return (lazily creating) the persistent HTTP session to ``container``."""
+        session = self._sessions.get(container)
+        if session is None:
+            session = requests.Session()
+            self._sessions[container] = session
+        return session
 
-        A short socket timeout bounds how long a dead/unreachable node can stall a
-        dispatch before the connection fails and failover kicks in.
-        """
-        conn = self._connections.get(container)
-        if conn is None:
-            host, port = self.resolver.expert(container)
-            conn = TCPConnection(host, port, timeout=10.0)
-            self._connections[container] = conn
-        return conn
-
-    def _drop_connection(self, container: str) -> None:
-        conn = self._connections.pop(container, None)
-        if conn is not None:
-            conn.close()
+    def _drop_session(self, container: str) -> None:
+        session = self._sessions.pop(container, None)
+        if session is not None:
+            session.close()
 
     def _run(
         self,
@@ -250,29 +249,36 @@ class Dispatcher:
             prefetch_probs=torch.tensor(prefetch_probs, dtype=torch.float32),
         ).to_bytes()
         serialize_time = time.perf_counter() - serialize_start
-        payload = struct.pack(">I", layer) + body
 
-        # Send + deserialize, retrying on transient data-plane errors (a missing or
-        # malformed reply frame — e.g. corruption from a flaky NAT / Docker Desktop port
-        # forward). The expert forward is a pure function of the request, so re-sending
-        # the same payload is safe. Each retry drops the connection so a desynced byte
-        # stream (a wrong length prefix misaligns every subsequent frame) is discarded.
+        # POST the safetensors request to the node's /expert endpoint. The reply carries
+        # the server-side compute time in the X-Server-Time header and the expert output
+        # as the safetensors body. Retry on a missing/malformed reply (a transient
+        # corruption from a flaky NAT / Docker Desktop port-forward); the expert forward
+        # is a pure function of the request, so re-sending the same body is safe. The
+        # session is kept alive across attempts — urllib3 already discards a broken
+        # connection and reuses a healthy one, so we never reopen a socket unnecessarily.
         last_exc: Exception | None = None
         for attempt in range(MAX_SEND_ATTEMPTS):
             try:
                 http_start = time.perf_counter()
-                # Request: [layer][body]; reply: [server_seconds][out], over one persistent
-                # connection per node (no HTTP framing per call).
-                reply = self._connection(container).request(payload)
+                resp = self._session_for(container).post(
+                    f"{self.resolver.http(container)}/expert",
+                    data=body,
+                    headers={
+                        "X-Layer": str(layer),
+                        "Content-Type": "application/octet-stream",
+                    },
+                    timeout=EXPERT_TIMEOUT,
+                )
+                resp.raise_for_status()
                 http_time = time.perf_counter() - http_start
-                (server_time,) = struct.unpack(">d", reply[:8])
+                server_time = float(resp.headers["X-Server-Time"])
                 deserialize_start = time.perf_counter()
-                out = ExpertResponse.from_bytes(reply[8:]).out
+                out = ExpertResponse.from_bytes(resp.content).out
                 deserialize_time = time.perf_counter() - deserialize_start
                 break
-            except Exception as exc:  # noqa: BLE001 - OSError (drop) or a malformed reply
+            except Exception as exc:  # noqa: BLE001 - RequestException or a malformed reply
                 last_exc = exc
-                self._drop_connection(container)
                 if attempt + 1 < MAX_SEND_ATTEMPTS:
                     logger.warning(
                         "token %d layer %d -> %s: data-plane error (attempt %d/%d): %s",
@@ -380,8 +386,8 @@ class Dispatcher:
         }
 
     def close(self) -> None:
-        """Release the worker pool, control session, and data-plane connections."""
+        """Release the worker pool, control session, and data-plane sessions."""
         self._pool.shutdown(wait=False)
         self._session.close()
-        for container in list(self._connections):
-            self._drop_connection(container)
+        for container in list(self._sessions):
+            self._drop_session(container)

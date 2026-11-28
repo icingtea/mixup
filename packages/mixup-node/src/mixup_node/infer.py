@@ -2,22 +2,21 @@
 
 Run inside every container. The runtime environment (container name, startup layout,
 prompt, token budget) is read from the single MIXUP_NODE_ENV env var. Every node serves a
-persistent FastAPI app (health, leader, routing, gossip, generate) and a raw-TCP expert
-data plane; a background control thread boots the node and runs the SWIM gossip loop.
+persistent FastAPI app (health, leader, routing, gossip, generate, and the ``/expert``
+data-plane endpoint); a background control thread boots the node and runs the SWIM gossip
+loop.
 """
 
 import logging
-import struct
 import threading
 import time
-from collections.abc import Callable
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from starlette.concurrency import run_in_threadpool
 from transformers import GraniteMoeConfig
 
-from mixup_core.constants import EXPERT_PORT, INTERNAL_PORT, MODEL_DIR
+from mixup_core.constants import INTERNAL_PORT, MODEL_DIR
 from mixup_core.election import leader_projection
 from mixup_core.env import load_node_env
 from mixup_core.logging_config import configure_logging
@@ -28,7 +27,6 @@ from mixup_core.types import GenerateRequest, GenerateResponse
 from .memory import TieredExpertStore
 from .node import Node
 from .serialization import ExpertRequest, ExpertResponse
-from .transport import TCPServer
 
 logger = logging.getLogger(__name__)
 
@@ -183,39 +181,50 @@ def build_app(node: Node) -> FastAPI:
             dispatch_seconds=dispatch,
         ).model_dump()
 
+    @app.post("/expert")
+    async def expert(request: Request) -> Response:
+        """Expert data plane: run one layer's experts on this node's share.
+
+        Body is the ``ExpertRequest`` safetensors bytes; the layer id rides in the
+        ``X-Layer`` header (the binary body stays a pure safetensors blob). The GIL-heavy
+        deserialize + forward + serialize runs off the event loop so /gossip stays live.
+        """
+        if node.expert_group is None:
+            raise HTTPException(status_code=503, detail="not an expert node")
+        layer = int(request.headers.get("X-Layer", "0"))
+        body = await request.body()
+        return await run_in_threadpool(_expert_handle, node, layer, body)
+
     return app
 
 
-def _expert_callback(node: Node) -> Callable[[bytes], bytes]:
-    """Build the raw-TCP data-plane handler: ``[layer][body] -> [server_seconds][out]``."""
-
-    def handle(payload: bytes) -> bytes:
-        (layer,) = struct.unpack(">I", payload[:4])
-        if node.expert_group is None:
-            raise RuntimeError("not an expert node")
-        server_start = time.perf_counter()
-        req = ExpertRequest.from_bytes(payload[4:])
-        # Prefetch the predicted next-layer experts (Phase 3 + 6) while we compute this
-        # layer: the hint carries each candidate's activation probability, and the store
-        # applies the paper's ``θ_pre`` threshold (driven by resource stability + free
-        # memory) before deciding what to load.
-        if req.prefetch.numel() > 0 and isinstance(node.expert_group, TieredExpertStore):
-            nxt = layer + 1
-            if nxt < node.model_config.num_hidden_layers:
-                stability = node.monitor.snapshot().get("cpu_util_stability", 1.0)
-                probs = (
-                    req.prefetch_probs.tolist()
-                    if req.prefetch_probs.numel() == req.prefetch.numel()
-                    else None
-                )
-                node.expert_group.prefetch(nxt, req.prefetch.tolist(), probs, stability)
-        out = node.expert_group.forward(
-            layer, req.hidden_states, req.top_k_index, req.top_k_weights
-        )
-        body = ExpertResponse(out=out).to_bytes()
-        return struct.pack(">d", time.perf_counter() - server_start) + body
-
-    return handle
+def _expert_handle(node: Node, layer: int, body: bytes) -> Response:
+    """Run the expert forward for ``layer`` and return the serialized ``ExpertResponse``."""
+    server_start = time.perf_counter()
+    req = ExpertRequest.from_bytes(body)
+    # Prefetch the predicted next-layer experts (Phase 3 + 6) while we compute this
+    # layer: the hint carries each candidate's activation probability, and the store
+    # applies the paper's ``θ_pre`` threshold (driven by resource stability + free
+    # memory) before deciding what to load.
+    if req.prefetch.numel() > 0 and isinstance(node.expert_group, TieredExpertStore):
+        nxt = layer + 1
+        if nxt < node.model_config.num_hidden_layers:
+            stability = node.monitor.snapshot().get("cpu_util_stability", 1.0)
+            probs = (
+                req.prefetch_probs.tolist()
+                if req.prefetch_probs.numel() == req.prefetch.numel()
+                else None
+            )
+            node.expert_group.prefetch(nxt, req.prefetch.tolist(), probs, stability)
+    out = node.expert_group.forward(
+        layer, req.hidden_states, req.top_k_index, req.top_k_weights
+    )
+    payload = ExpertResponse(out=out).to_bytes()
+    return Response(
+        content=payload,
+        media_type="application/octet-stream",
+        headers={"X-Server-Time": str(time.perf_counter() - server_start)},
+    )
 
 
 def start() -> None:
@@ -239,10 +248,8 @@ def start() -> None:
     node = Node(env, model_config, view)
     logger.info("%s boot: role=%s", env.container_name, node.role.value)
 
-    # Expert data plane: a raw-TCP server, bound synchronously so it is listening before
-    # the node reports ready. The control plane stays on FastAPI/HTTP.
-    tcp_server = TCPServer("0.0.0.0", EXPERT_PORT, _expert_callback(node))
-    threading.Thread(target=tcp_server.serve_forever, daemon=True).start()
+    # The expert data plane is the /expert endpoint on the same FastAPI app (control +
+    # data share one HTTP server); only the background control thread is separate.
     threading.Thread(target=node.run, daemon=True).start()
     uvicorn.run(build_app(node), host="0.0.0.0", port=INTERNAL_PORT, log_level="warning")
 
