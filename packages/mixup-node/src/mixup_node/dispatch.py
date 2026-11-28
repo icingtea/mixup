@@ -37,6 +37,11 @@ RTT_ALPHA = 0.3
 COST_SAMPLE_LIMIT = 500
 """Cap on retained (n_experts, server_ms) samples per node for the online cost fit."""
 
+MAX_SEND_ATTEMPTS = 3
+"""Times to retry a data-plane request when the reply is missing or malformed (a corrupted
+frame from a flaky NAT / Docker Desktop port-forward). The expert forward is a pure
+function of the request, so re-sending is safe."""
+
 
 class _NodeFailure(Exception):
     """Raised when an expert node is unreachable; carries the node name."""
@@ -245,18 +250,41 @@ class Dispatcher:
             prefetch_probs=torch.tensor(prefetch_probs, dtype=torch.float32),
         ).to_bytes()
         serialize_time = time.perf_counter() - serialize_start
+        payload = struct.pack(">I", layer) + body
 
-        try:
-            http_start = time.perf_counter()
-            # Request: [layer][body]; reply: [server_seconds][out], over one persistent
-            # connection per node (no HTTP framing per call).
-            reply = self._connection(container).request(struct.pack(">I", layer) + body)
-            http_time = time.perf_counter() - http_start
-        except OSError as exc:
-            self._drop_connection(container)
-            raise _NodeFailure(container) from exc
-
-        (server_time,) = struct.unpack(">d", reply[:8])
+        # Send + deserialize, retrying on transient data-plane errors (a missing or
+        # malformed reply frame — e.g. corruption from a flaky NAT / Docker Desktop port
+        # forward). The expert forward is a pure function of the request, so re-sending
+        # the same payload is safe. Each retry drops the connection so a desynced byte
+        # stream (a wrong length prefix misaligns every subsequent frame) is discarded.
+        last_exc: Exception | None = None
+        for attempt in range(MAX_SEND_ATTEMPTS):
+            try:
+                http_start = time.perf_counter()
+                # Request: [layer][body]; reply: [server_seconds][out], over one persistent
+                # connection per node (no HTTP framing per call).
+                reply = self._connection(container).request(payload)
+                http_time = time.perf_counter() - http_start
+                (server_time,) = struct.unpack(">d", reply[:8])
+                deserialize_start = time.perf_counter()
+                out = ExpertResponse.from_bytes(reply[8:]).out
+                deserialize_time = time.perf_counter() - deserialize_start
+                break
+            except Exception as exc:  # noqa: BLE001 - OSError (drop) or a malformed reply
+                last_exc = exc
+                self._drop_connection(container)
+                if attempt + 1 < MAX_SEND_ATTEMPTS:
+                    logger.warning(
+                        "token %d layer %d -> %s: data-plane error (attempt %d/%d): %s",
+                        self._token,
+                        layer,
+                        container,
+                        attempt + 1,
+                        MAX_SEND_ATTEMPTS,
+                        exc,
+                    )
+        else:
+            raise _NodeFailure(container) from last_exc
 
         # Online telemetry (Phase 3/4): measure network RTT and record
         # (n_experts, server_ms) per node for cost-model calibration. Decode-only
@@ -277,10 +305,6 @@ class Dispatcher:
             samples.append((n_experts, server_time * 1000.0))
             if len(samples) > COST_SAMPLE_LIMIT:
                 del samples[: len(samples) - COST_SAMPLE_LIMIT]
-
-        deserialize_start = time.perf_counter()
-        out = ExpertResponse.from_bytes(reply[8:]).out
-        deserialize_time = time.perf_counter() - deserialize_start
 
         if torch.isnan(out).any() or torch.isinf(out).any():
             logger.error(

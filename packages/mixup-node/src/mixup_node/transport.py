@@ -17,6 +17,11 @@ from collections.abc import Callable
 _HEADER = struct.Struct(">I")
 """Four-byte big-endian length prefix."""
 
+MAX_FRAME_BYTES = 256 * 1024 * 1024
+"""Reject a frame whose length prefix exceeds this (a corrupted prefix would otherwise
+make ``recv_exact`` block until the socket timeout). Expert frames are at most a few
+hundred KB (a batched prefill), so 256 MiB is a very generous ceiling."""
+
 
 def send_frame(sock: socket.socket, payload: bytes) -> None:
     """Write one length-prefixed frame (all bytes) to ``sock``."""
@@ -37,6 +42,8 @@ def recv_exact(sock: socket.socket, n: int) -> bytes:
 def recv_frame(sock: socket.socket) -> bytes:
     """Read one length-prefixed frame and return its payload."""
     (length,) = _HEADER.unpack(recv_exact(sock, _HEADER.size))
+    if length > MAX_FRAME_BYTES:
+        raise ConnectionError(f"frame too large ({length} bytes); stream desynced")
     return recv_exact(sock, length)
 
 
