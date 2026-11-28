@@ -6,7 +6,6 @@ unit-tested without Docker, while keeping the executor straightforward.
 """
 
 import logging
-import os
 
 import docker
 from docker.errors import ContainerError, ImageNotFound, NotFound
@@ -71,7 +70,7 @@ def _file_exists(
         client.containers.run(
             spec.image,
             command=["test", "-f", path],
-            volumes={volume: {"bind": os.path.dirname(path), "mode": "ro"}},
+            volumes={volume: {"bind": CONTAINER_MODELS_DIR, "mode": "ro"}},
             remove=True,
         )
         return True
@@ -93,7 +92,7 @@ def ensure_model(client: docker.DockerClient, spec: RunSpec) -> None:
     logger.info("downloading model into volume %s (this can take a while)", volume)
     client.containers.run(
         spec.image,
-        command=["mixup-node-fetch", "--dir", CONTAINER_MODELS_DIR],
+        command=["mixup-node-fetch"],  # default --dir = MODEL_DIR (the model-name subdir)
         volumes={volume: {"bind": CONTAINER_MODELS_DIR, "mode": "rw"}},
         remove=True,
         user="root",
