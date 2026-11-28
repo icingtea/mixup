@@ -1,5 +1,5 @@
 {
-  "image": "ghcr.io/icingtea/mixup:latest",
+  "image": "ghcr.io/lalitm1004/mixup:latest",
   "cluster_name": "home",
   "startup": {
     "initial_leader": "monad-nix",

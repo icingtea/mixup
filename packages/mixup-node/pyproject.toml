@@ -25,3 +25,8 @@ mixup-node-fetch = "mixup_node.fetch:main"
 
 [tool.uv.sources]
 mixup-core = { workspace = true }
+# On ARM64 (the CPU-only Pis) pull torch from the CPU index, which has no CUDA
+# deps; on x86_64 it stays on PyPI (CUDA + nvidia-*).
+torch = [
+    { index = "pytorch-cpu", marker = "platform_machine == 'aarch64'" },
+]
